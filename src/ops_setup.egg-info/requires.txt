@@ -1,0 +1,14 @@
+numpy
+openpathsampling
+
+[all]
+ops-setup[dev,openmm]
+
+[dev]
+pytest
+pytest-cov
+
+[openmm]
+openmm
+openmmtools
+mdtraj

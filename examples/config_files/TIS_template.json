@@ -1,0 +1,17 @@
+{
+  "TIS": {
+    "Scheme": {
+      "Shooting_Move": "OneWay",
+      "selector": "uniform",
+      "parameters": {
+        "gaussian width": 0.1,
+        "origin_shift": 0.0
+      }
+    },
+    "modification_method": "extend",
+    "interface_parameters": {
+      "interfaces_forward": [0.6, 0.8, 1.0, 1.2],
+      "interfaces_backward": [0.6, 0.8, 1.0, 1.2]
+    }
+  }
+}

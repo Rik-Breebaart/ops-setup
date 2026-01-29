@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ops-setup"
+version = "0.1.0"
+description = "Utilities and base classes for setting up TPS/TIS simulations with OpenPathSampling"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "GPL-3.0"}
+authors = [
+    {name = "R. Breebaart"},
+]
+keywords = ["molecular dynamics", "TPS", "TIS", "OpenPathSampling", "rare events"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy",
+    "openpathsampling",
+]
+
+[project.optional-dependencies]
+openmm = [
+    "openmm",
+    "openmmtools",
+    "mdtraj",
+]
+dev = [
+    "pytest",
+    "pytest-cov",
+]
+all = [
+    "ops-setup[openmm,dev]",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
