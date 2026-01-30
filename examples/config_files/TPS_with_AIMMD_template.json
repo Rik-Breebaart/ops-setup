@@ -35,8 +35,8 @@
     "ewald_tolerance": 0.0005
   },
   "States": {
-    "bound": 0.5,
-    "unbound": 1.5
+    "bound": 0.05,
+    "unbound": 1.0
   },
   "settings": {},
   "AIMMD_settings": {

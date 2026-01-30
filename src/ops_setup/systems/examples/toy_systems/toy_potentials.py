@@ -30,7 +30,7 @@ class higher_d_harmonic(toys.PES):
     def create_pes(self, pes_list):
         # fix seed to get the same pes everytime
         np.random.seed(self.seed)
-        print(np.random.get_state()[1][0])
+        print("seed used for harmonic oscilattors", np.random.get_state()[1][0])
         harmonic_omegas = [1.0, 1.5] + [10*np.random.uniform(0.2,1.0) for _ in range(self.n_harmonics-2)]
         if self.n_harmonics==0:
             omega=[0. for _ in range(self.n_dims_pot)]

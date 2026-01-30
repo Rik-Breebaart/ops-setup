@@ -307,7 +307,7 @@ class TPSSetupBase:
             OpenPathSampling network object.
         """
         if network_type == "TPS":
-            return paths.TPSNetwork(self.states[0], self.states[1])
+            return paths.TPSNetwork.from_states_all_to_all([self.states[0], self.states[1]])
         else:
             raise ValueError(f"Network type '{network_type}' not supported in base class")
     
