@@ -23,6 +23,7 @@ dependencies:
   # Utilities
   - pyyaml
   - networkx
+  - cython
   
   # Development tools
   - jupyter
