@@ -258,6 +258,7 @@ class AmberOpenMMSetup(OpenMMTPSSetup):
         print("Extracting topology and creating system from AMBER files...")
         
         # Get file names from config
+        resource_directory = Path(self.config.get('resource_directory', ''))
         system_files = self.config.get('system_files', {})
         topology_file = system_files.get('topology_file', 'system.prmtop')
         coordinate_file = system_files.get('coordinate_file', 'system.inpcrd')
@@ -265,10 +266,10 @@ class AmberOpenMMSetup(OpenMMTPSSetup):
         
         # Load topology and coordinates
         prmtop = app.AmberPrmtopFile(
-            str(self.resource_directory / topology_file)
+            str(resource_directory / topology_file)
         )
         inpcrd = app.AmberInpcrdFile(
-            str(self.resource_directory / coordinate_file)
+            str(resource_directory / coordinate_file)
         )
         
         # Create system with specified parameters
@@ -301,7 +302,7 @@ class AmberOpenMMSetup(OpenMMTPSSetup):
         
         # Load state file if provided
         if state_file:
-            init_simulation.loadState(str(self.resource_directory / state_file))
+            init_simulation.loadState(str(resource_directory / state_file))
             
             # Update box vectors if present
             new_box_vectors = init_simulation.context.getState(
@@ -315,3 +316,6 @@ class AmberOpenMMSetup(OpenMMTPSSetup):
         ).getPositions(asNumpy=True)
         
         return prmtop.topology, system, positions
+
+
+#TODO include openmm gromacs based system setup class here as well (used for T4L setup)

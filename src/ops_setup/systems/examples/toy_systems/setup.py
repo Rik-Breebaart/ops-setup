@@ -51,35 +51,43 @@ class ToyTPSSetup(TPSSetupBase):
         (stateA, stateB) volume definitions.
     """
     
-    def __init__(self, potential_name: str, potential_kwargs: dict = None,
-                 integrator_params: dict = None, resource_directory=None,
-                 print_config_flag: bool = True):
+    def __init__(self, potential_name: str = None, potential_kwargs: dict = None,
+                    integrator_params: dict = None, config_path: Path = None, 
+                    resource_directory=None, print_config_flag: bool = True):
         """Initialize toy TPS setup."""
-        self.potential_name = potential_name
-        self.potential_kwargs = potential_kwargs or {}
-        self.integrator_params = integrator_params or {}
-        self.system_name = potential_name
-        self.platform_name = "CPU"
+        self.using_config = config_path is not None
+
+        if self.using_config:
+            # Use config mode: call base __init__ and rely on config values
+            #TODO: this now wouldnt work as the extract config needs to be changed accordingly (integrator_params doesnt exist yet etc.)
+            super().__init__(config_path, resource_directory, print_config_flag)
+            # potential_name will be pulled later from config if needed
+        else:
+            # Manual mode: store parameters before base __init__
+            self.potential_name = potential_name
+            self.potential_kwargs = potential_kwargs or {}
+            self.integrator_params = integrator_params or {}
+            self.system_name = potential_name
+            self.platform_name = "CPU"
+
+            # Fallback defaults
+            self.integrator_params.setdefault('dt', 0.05)
+            self.integrator_params.setdefault('temperature', 1.0)
+            self.integrator_params.setdefault('gamma', 2.5)
+
+            # Simulate config values so base class can use them
+            self.config = {}  # Empty dummy config
+            self.tps_selector = "uniform"
+            self.tps_selector_params = {}
+            self.shooting_scheme = "TwoWay"
+            self.n_frames_max = 5000
+            self.n_steps_per_frame = 1
+            self.resource_directory = Path(resource_directory) if resource_directory else Path("")
+      
+            # Initialize parent will call _setup_integrator, _setup_system, etc.
+            # But we skip the config-based initialization
+            self._initialize_toy_system()
         
-        # Set defaults
-        if 'dt' not in self.integrator_params:
-            self.integrator_params['dt'] = 0.05
-        if 'temperature' not in self.integrator_params:
-            self.integrator_params['temperature'] = 1.0
-        if 'gamma' not in self.integrator_params:
-            self.integrator_params['gamma'] = 2.5
-        
-        # Set TPS settings that would normally come from config
-        self.n_frames_max = 5000
-        self.n_steps_per_frame = 1
-        self.shooting_scheme = "TwoWay"
-        self.tps_selector = "uniform"
-        self.tps_selector_params = {}
-        
-        # Initialize parent will call _setup_integrator, _setup_system, etc.
-        # But we skip the config-based initialization
-        self._initialize_toy_system()
-    
     def _initialize_toy_system(self):
         """Initialize toy system directly without config file."""
         # Setup toy engine components
@@ -90,6 +98,8 @@ class ToyTPSSetup(TPSSetupBase):
         self.md_engine = self._setup_engine(self.integrator)
         self.template = self._create_template()
         self.states = self._define_states()
+        self.selector = self._create_selector()
+
     
     def _create_potential(self):
         """Create the toy potential object."""
