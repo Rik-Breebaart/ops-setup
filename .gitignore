@@ -1,2 +1,11 @@
 *.nc
 *.pyc
+*.db
+# Ignore descriptor storage files
+*.npz
+*.meta.json
+*.structure.json
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+# Ignore VSCode settings
+.vscode/    
