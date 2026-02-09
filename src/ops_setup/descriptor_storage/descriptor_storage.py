@@ -187,6 +187,11 @@ class DescriptorStorage:
         
         if mode == 'r' and self.path.parent.exists():
             self.load_structure()
+        elif mode == 'a' and self.path.parent.exists():
+            # Load existing data for append mode
+            self._load_all_data()
+            # Set global point index to end of existing data
+            self._global_point_index = self._compute_total_points()
         elif mode == 'w':
             self.path.parent.mkdir(parents=True, exist_ok=True)
         
@@ -281,7 +286,7 @@ class DescriptorStorage:
         if not self._is_open:
             raise RuntimeError("Storage is closed. Use 'with' statement or call open().")
         
-        interface_key = f"{interface_value:.2f}"
+        interface_key = _interface_key(interface_value)
         
         # Initialize sets/interfaces as needed
         if set_name not in self.sets:
@@ -334,30 +339,35 @@ class DescriptorStorage:
     
     def get_trajectory_descriptors(self,
                                   set_name: str,
-                                  interface_key: str,
+                                  interface_value: Union[float, str],
                                   trajectory_index: int,
-                                  descriptor_name: str) -> np.ndarray:
+                                  descriptor_names: List[str]) -> np.ndarray:
         """Get descriptors for a specific trajectory."""
         if set_name not in self.sets:
             raise KeyError(f"Set '{set_name}' not found")
+        interface_key = _interface_key(interface_value)
         if interface_key not in self.sets[set_name].interfaces:
             raise KeyError(f"Interface '{interface_key}' not found in set '{set_name}'")
-        if descriptor_name not in self.descriptors:
-            raise KeyError(f"Descriptor '{descriptor_name}' not found")
+        not_in_descriptors = [name for name in descriptor_names if name not in self.descriptors]
+        if not_in_descriptors:
+            raise KeyError(f"Descriptors not found: {not_in_descriptors}")
         
         traj_info = self.sets[set_name].interfaces[interface_key].trajectories[trajectory_index]
-        return self.descriptors[descriptor_name][
-            traj_info.descriptor_start:traj_info.descriptor_end
-        ]
+        return np.concatenate([
+            self.descriptors[name][
+                traj_info.descriptor_start:traj_info.descriptor_end
+            ] for name in descriptor_names
+        ], axis=1)  
     
     def get_trajectory_shot_results(self,
                                    set_name: str,
-                                   interface_key: str,
+                                   interface_value: Union[float, str],
                                    trajectory_index: int) -> Optional[np.ndarray]:
         """Get shot results for a specific trajectory."""
         if self.shot_results is None:
             return None
         
+        interface_key = _interface_key(interface_value)
         traj_info = self.sets[set_name].interfaces[interface_key].trajectories[trajectory_index]
         return self.shot_results[
             traj_info.descriptor_start:traj_info.descriptor_end
@@ -365,19 +375,27 @@ class DescriptorStorage:
     
     def get_interface_descriptors(self,
                                  set_name: str,
-                                 interface_key: str,
-                                 descriptor_name: str) -> np.ndarray:
+                                 interface_value: Union[float, str],
+                                 descriptor_names: List[str],
+                                 starting_traj: int = 0) -> np.ndarray:
         """Get all descriptors at a specific interface (concatenated)."""
-        if descriptor_name not in self.descriptors:
-            raise KeyError(f"Descriptor '{descriptor_name}' not found")
+        not_in_descriptors = [name for name in descriptor_names if name not in self.descriptors]
+        if not_in_descriptors:
+            raise KeyError(f"Descriptors not found: {not_in_descriptors}")
         
+        interface_key = _interface_key(interface_value)
         interface_data = self.sets[set_name].interfaces[interface_key]
         if not interface_data.trajectories:
             return np.array([])
         
-        start = interface_data.trajectories[0].descriptor_start
+        start = interface_data.trajectories[starting_traj].descriptor_start
         end = interface_data.trajectories[-1].descriptor_end
-        return self.descriptors[descriptor_name][start:end]
+
+        
+
+        return np.concatenate([
+            self.descriptors[name][start:end] for name in descriptor_names
+        ], axis=1)
     
     # ========================================================================
     # Weights Management
@@ -385,11 +403,13 @@ class DescriptorStorage:
     
     def set_trajectory_weights(self,
                               set_name: str,
-                              interface_key: str,
+                              interface_value: Union[float, str],
                               weights: np.ndarray) -> None:
         """Set weights for trajectories at an interface."""
         if set_name not in self.sets:
             raise KeyError(f"Set '{set_name}' not found")
+        
+        interface_key = _interface_key(interface_value) 
         if interface_key not in self.sets[set_name].interfaces:
             raise KeyError(f"Interface '{interface_key}' not found")
         
@@ -406,9 +426,10 @@ class DescriptorStorage:
     
     def get_trajectory_weight(self,
                              set_name: str,
-                             interface_key: str,
+                             interface_value: Union[float, str],
                              trajectory_index: int) -> float:
         """Get weight for a specific trajectory (default 1.0)."""
+        interface_key = _interface_key(interface_value)
         if (set_name in self.trajectory_weights and
             interface_key in self.trajectory_weights[set_name]):
             return float(self.trajectory_weights[set_name][interface_key][trajectory_index])
@@ -416,8 +437,9 @@ class DescriptorStorage:
     
     def get_interface_weights(self,
                              set_name: str,
-                             interface_key: str) -> np.ndarray:
+                             interface_value: Union[float, str]) -> np.ndarray:
         """Get per-point weights for an interface."""
+        interface_key = _interface_key(interface_value)
         interface_data = self.sets[set_name].interfaces[interface_key]
         
         if (set_name not in self.trajectory_weights or
@@ -434,6 +456,59 @@ class DescriptorStorage:
             point_weights.append(np.full(traj_info.n_points, weight))
         
         return np.concatenate(point_weights)
+    
+    # ========================================================================
+    # Helper Methods
+    # ========================================================================
+    
+    def _load_all_data(self) -> None:
+        """Load all data (structure, descriptors, weights, metadata) from disk."""
+        # Load structure
+        structure_file = self.path.parent / f"{self.path.name}.structure.json"
+        if structure_file.exists():
+            with open(structure_file, 'r') as f:
+                structure = json.load(f)
+            self.sets = {
+                set_name: SetData.from_dict(set_data)
+                for set_name, set_data in structure.items()
+            }
+        
+        # Load descriptors and shot_results
+        descriptors_file = self.path.parent / f"{self.path.name}.descriptors.npz"
+        if descriptors_file.exists():
+            arrays = np.load(descriptors_file)
+            for key in arrays.files:
+                if key == 'shot_results':
+                    self.shot_results = arrays[key]
+                else:
+                    self.descriptors[key] = arrays[key]
+        
+        # Load weights
+        weights_file = self.path.parent / f"{self.path.name}.weights.npz"
+        if weights_file.exists():
+            weights_data = np.load(weights_file)
+            for key in weights_data.files:
+                set_name, interface_key = key.split('__')
+                if set_name not in self.trajectory_weights:
+                    self.trajectory_weights[set_name] = {}
+                self.trajectory_weights[set_name][interface_key] = weights_data[key]
+        
+        # Load metadata
+        meta_file = self.path.parent / f"{self.path.name}.meta.json"
+        if meta_file.exists():
+            with open(meta_file, 'r') as f:
+                self.metadata = json.load(f)
+        
+        logger.info(f"Loaded existing data for append mode from {self.path}")
+    
+    def _compute_total_points(self) -> int:
+        """Compute total number of points currently stored."""
+        total = 0
+        for set_data in self.sets.values():
+            for interface_data in set_data.interfaces.values():
+                for traj_info in interface_data.trajectories:
+                    total += traj_info.n_points
+        return total
     
     # ========================================================================
     # I/O
@@ -599,3 +674,9 @@ class DescriptorStorage:
     
     def __repr__(self) -> str:
         return f"DescriptorStorage({self.path}, mode={self.mode})"
+
+def _interface_key(interface_value: Union[float, str]) -> str:
+    """Convert interface value to standardized string key."""
+    if isinstance(interface_value, float):
+        return f"{interface_value:.2f}"
+    return str(interface_value)

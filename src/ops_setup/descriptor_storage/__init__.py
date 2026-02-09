@@ -38,11 +38,22 @@ from .descriptor_storage import (
     SetData,
 )
 
+from .sampling_utils import (
+    sampling_descriptor_manager,
+    infer_descriptor_names_and_shapes,
+    extract_descriptors_from_cv,
+    get_last_storage_index,
+)
+
 __all__ = [
     'DescriptorStorage',
     'TrajectoryInfo',
     'InterfaceData',
     'SetData',
+    'sampling_descriptor_manager',
+    'infer_descriptor_names_and_shapes',
+    'extract_descriptors_from_cv',
+    'get_last_storage_index',
 ]
 
 __version__ = '0.1.0'
