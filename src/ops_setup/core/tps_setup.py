@@ -51,11 +51,10 @@ class TPSSetupBase:
         System topology.
     """
     
-    def __init__(self, config_path: Path, resource_directory: Path = None, 
-                 print_config_flag: bool = True):
+    def __init__(self, config_path: Path, print_config_flag: bool = True):
         """Initialize the TPS setup from configuration file."""
-        self.resource_directory = Path(resource_directory) if resource_directory else Path("")
         self.config = read_config(config_path)
+
         
         if print_config_flag:
             print_config(self.config)

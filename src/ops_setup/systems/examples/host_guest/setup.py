@@ -39,13 +39,13 @@ class HostGuestTPSSetup(AmberOpenMMSetup):
     """
     
     def __init__(self, config_path: Path, cv_function,
-                 resource_directory: Path = None, print_config_flag: bool = True):
+                 print_config_flag: bool = True):
         """Initialize host-guest TPS setup."""
         self.cv_function = cv_function
         self.bound_distance = None
         self.unbound_distance = None
         
-        super().__init__(config_path, resource_directory, print_config_flag)
+        super().__init__(config_path, print_config_flag)
     
     def _extract_config(self) -> None:
         """Extract host-guest specific configuration."""
@@ -103,7 +103,7 @@ class HostGuestTISSetup(TISSetupBase):
     """
     
     def __init__(self, tps_config_path: Path, tis_config_path: Path,
-                 cv_function, resource_directory: Path = None,
+                 cv_function, 
                  print_config_flag: bool = True):
         """Initialize host-guest TIS setup."""
         self.cv_function = cv_function
@@ -112,18 +112,16 @@ class HostGuestTISSetup(TISSetupBase):
         
         # Store paths to use in parent init
         self._tps_config_path = tps_config_path
-        self._resource_dir = resource_directory
         
         # Initialize using special method to handle multiple inheritance
-        self._init_as_host_guest(tps_config_path, tis_config_path,
-                                  resource_directory, print_config_flag)
+        self._init_as_host_guest(tps_config_path, tis_config_path, print_config_flag)
     
     def _init_as_host_guest(self, tps_config_path, tis_config_path,
-                            resource_directory, print_config_flag):
+                            print_config_flag):
         """Custom initialization to properly setup host-guest TIS."""
         # First setup as OpenMM system
         from ops_setup.engines.openmm_engine import OpenMMTPSSetup
-        OpenMMTPSSetup.__init__(self, tps_config_path, resource_directory,
+        OpenMMTPSSetup.__init__(self, tps_config_path,
                                 print_config_flag)
         
         # Then add TIS configuration
@@ -144,8 +142,8 @@ class HostGuestTISSetup(TISSetupBase):
         
         # Extract state boundaries
         states_config = self.config.get('States', {})
-        self.bound_distance = states_config.get('bound', 0.5)
-        self.unbound_distance = states_config.get('unbound', 1.5)
+        self.bound_distance = states_config.get('bound', 0.05)
+        self.unbound_distance = states_config.get('unbound', 1.0)
     
     def _setup_system(self) -> Tuple[Any, Any, Any]:
         """Set up system from AMBER files (same as AmberOpenMMSetup)."""

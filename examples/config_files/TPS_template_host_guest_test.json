@@ -1,6 +1,6 @@
 {
   "system_name": "CB7-B2",
-  "platform_name": "CUDA",
+  "platform_name": "CPU",
   "UNITS": {
     "size_unit": "nanometer",
     "press_unit": "bar",
@@ -26,6 +26,7 @@
     }
   },
   "system_files": {
+    "resource_directory": "/home/rbreeba/code/ops-setup/examples/resource_files/host_guest/",
     "topology_file": "complex-explicit.prmtop",
     "coordinate_file": "complex-explicit.inpcrd",
     "state_file": "cb7_b2_mdV_cont2.state"
@@ -36,7 +37,7 @@
   },
   "States": {
     "bound": 0.05,
-    "unbound": 1.0
+    "unbound": 0.55
   },
   "settings": {}
 }

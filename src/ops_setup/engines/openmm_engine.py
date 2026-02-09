@@ -36,8 +36,6 @@ class OpenMMTPSSetup(TPSSetupBase):
     ----------
     config_path : str or Path
         Path to the JSON configuration file.
-    resource_directory : str or Path, optional
-        Directory containing system resource files.
     print_config_flag : bool, optional
         Whether to print configuration upon initialization.
         
@@ -57,7 +55,7 @@ class OpenMMTPSSetup(TPSSetupBase):
         Thermodynamic ensemble ('P' for NPT, 'V' for NVT).
     """
     
-    def __init__(self, config_path: Path, resource_directory: Path = None,
+    def __init__(self, config_path: Path, 
                  print_config_flag: bool = True):
         """Initialize OpenMM TPS setup."""
         # Will be set in _extract_config before super().__init__() calls them
@@ -68,7 +66,7 @@ class OpenMMTPSSetup(TPSSetupBase):
         self.barostat_frequency = None
         self.constant_variable = None
         
-        super().__init__(config_path, resource_directory, print_config_flag)
+        super().__init__(config_path, print_config_flag)
     
     def _extract_config(self) -> None:
         """Extract OpenMM-specific configuration parameters."""
@@ -258,8 +256,9 @@ class AmberOpenMMSetup(OpenMMTPSSetup):
         print("Extracting topology and creating system from AMBER files...")
         
         # Get file names from config
-        resource_directory = Path(self.config.get('resource_directory', ''))
+
         system_files = self.config.get('system_files', {})
+        resource_directory = Path(system_files.get('resource_directory', ''))
         topology_file = system_files.get('topology_file', 'system.prmtop')
         coordinate_file = system_files.get('coordinate_file', 'system.inpcrd')
         state_file = system_files.get('state_file', None)

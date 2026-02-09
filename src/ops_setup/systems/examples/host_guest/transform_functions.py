@@ -7,7 +7,7 @@ import openpathsampling as paths
 import openpathsampling.engines.openmm as eng
 from collections import namedtuple
 import mdtraj as md 
-mdtraj_host_guest = md.load("/Users/rbreeba/Documents/PhD/-RE-TIS-AIMMD/TIS_AIMMD_biosystems/AIMMD_TIS_openmm_run_scripts/HostGuest.pdb")
+mdtraj_host_guest = md.load("/home/rbreeba/code/ops-setup/examples/resource_files/host_guest/HostGuest.pdb")
 mdtraj_topology = mdtraj_host_guest.topology
 
 guest_head_indices = np.array(mdtraj_topology.select("name C9 H15"))
