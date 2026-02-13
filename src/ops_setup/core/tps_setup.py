@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Optional, Tuple, Any
 import openpathsampling as paths
 from .config_reader import read_config, print_config
+from .tps_utilities import TPSUtilitiesMixin
 
 
-class TPSSetupBase:
+class TPSSetupBase(TPSUtilitiesMixin):
     """
     Base class for TPS simulation setup.
     
@@ -196,80 +197,6 @@ class TPSSetupBase:
         raise NotImplementedError(
             "Subclasses must implement _define_states() method"
         )
-
-    def _create_selector(self, selector_type=None, **kwargs):
-        """
-        Create a shooting point selector.
-
-        Parameters
-        ----------
-        selector_type : str, optional
-            Type of selector ('uniform', 'gaussian'). If None, uses config value.
-        **kwargs : dict
-            Additional parameters for selector creation.
-            For gaussian: collectivevariable, width, origin_shift
-
-        Returns
-        -------
-        ShootingPointSelector or None
-            Selector for choosing shooting points.
-        """
-        if selector_type is None:
-            selector_type = (self.tps_selector or "uniform").lower()
-        else:
-            selector_type = selector_type.lower()
-
-        if selector_type == "uniform":
-            return paths.UniformSelector()
-
-        if selector_type == "gaussian":
-            gaussian_cls = getattr(paths, "GaussianBiasSelector", None)
-            if gaussian_cls is None:
-                raise ValueError("Gaussian selector requested but paths.GaussianBiasSelector is unavailable")
-            if 'collectivevariable' not in kwargs:
-                raise ValueError("CV must be provided to create GaussianBiasSelector")
-            collectivevariable = kwargs['collectivevariable']
-            if collectivevariable is None:
-                raise ValueError("collectivevariable cannot be None for GaussianBiasSelector")
-            width = kwargs.get("width", None)
-            origin_shift = kwargs.get("origin_shift", None)
-            if width is None:
-                width = self.tps_selector_params.get("width", 0.1)
-            if origin_shift is None:
-                origin_shift = self.tps_selector_params.get("origin_shift", 0.0)
-
-            return gaussian_cls(collectivevariable, alpha=1/(2*width**2), l_0=origin_shift)
-
-        raise ValueError(f"Unknown selector type '{selector_type}'")
-
-    def _create_velocity_modifier(self):
-        """
-        Create a velocity randomizer for two-way shooting.
-
-        Returns
-        -------
-        RandomVelocities or None
-            Modifier to randomize velocities, or None if beta is unavailable.
-        """
-        beta = getattr(self.integrator, "beta", None)
-
-        if beta is None and hasattr(self.integrator, "getTemperature"):
-            openmm_unit = None
-            try:
-                from openmm import unit as openmm_unit
-            except Exception:
-                try:
-                    from simtk import unit as openmm_unit
-                except Exception:
-                    openmm_unit = None
-
-            if openmm_unit is not None:
-                beta = 1.0 / (self.integrator.getTemperature() * openmm_unit.BOLTZMANN_CONSTANT_kB)
-
-        if beta is None:
-            return None
-
-        return paths.RandomVelocities(beta=beta, engine=self.md_engine)
     
     def _get_platform_properties(self) -> dict:
         """
@@ -309,46 +236,3 @@ class TPSSetupBase:
             return paths.TPSNetwork.from_states_all_to_all([self.states[0], self.states[1]])
         else:
             raise ValueError(f"Network type '{network_type}' not supported in base class")
-    
-    def create_move_scheme(self, network, scheme_type: Optional[str] = None, selector=None):
-        """
-        Create a move scheme for path sampling.
-        
-        Parameters
-        ----------
-        network : Network
-            The path sampling network.
-        scheme_type : str, optional
-            Type of shooting scheme ('OneWay' or 'TwoWay'). Default is config or 'OneWay'.
-        selector : ShootingPointSelector, optional
-            Custom selector. If None, uses the selector created by the setup.
-            
-        Returns
-        -------
-        MoveScheme
-            OpenPathSampling move scheme.
-        """
-        scheme_type = scheme_type or self.shooting_scheme or "OneWay"
-        selector = selector or self.selector
-
-        if scheme_type == "OneWay":
-            if selector is None:
-                return paths.OneWayShootingMoveScheme(network, engine=self.md_engine)
-            return paths.OneWayShootingMoveScheme(network, selector=selector, engine=self.md_engine)
-
-        if scheme_type == "TwoWay":
-            modifier = self._create_velocity_modifier()
-            tw_strategy = paths.strategies.TwoWayShootingStrategy(
-                modifier=modifier,
-                selector=selector,
-                engine=self.md_engine,
-                group="TwoWayShooting"
-            )
-
-            move_scheme = paths.MoveScheme(network=network)
-            move_scheme.append(tw_strategy)
-            move_scheme.append(paths.strategies.OrganizeByMoveGroupStrategy())
-            move_scheme.build_move_decision_tree()
-            return move_scheme
-
-        raise ValueError(f"Scheme type '{scheme_type}' not recognized")

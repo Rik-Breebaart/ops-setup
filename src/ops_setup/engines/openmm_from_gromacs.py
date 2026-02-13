@@ -12,6 +12,9 @@ import json
 from collections import namedtuple
 import warnings
 
+from ..core.config_reader import read_config
+from ..core.tps_utilities import TPSUtilitiesMixin
+
 try:
     from openmm import app
     import openmm as mm
@@ -344,7 +347,7 @@ class OpenMMGromacs:
         self.simulation.step(n_steps)
 
 
-class OpenMMGromacsTPS:
+class OpenMMGromacsTPS(TPSUtilitiesMixin):
     """
     TPS-ready OpenMM setup from GROMACS files.
     
@@ -370,6 +373,8 @@ class OpenMMGromacsTPS:
         }
     config : dict, optional
         Configuration dictionary (see OpenMMGromacs)
+    config_path : str or Path, optional
+        Path to JSON configuration file (loads system files and engine settings)
     n_frames_max : int, optional
         Maximum frames in trajectory. Default is 5000.
     n_steps_per_frame : int, optional
@@ -388,14 +393,15 @@ class OpenMMGromacsTPS:
     """
     
     def __init__(self,
-                 topology_file: Path,
-                 structure_file: Path,
-                 forcefield_dir: Path,
+                 topology_file: Optional[Path],
+                 structure_file: Optional[Path],
+                 forcefield_dir: Optional[Path],
                  state_definitions: Dict[str, Any],
-                 config: Dict[str, Any] = None,
-                 n_frames_max: int = 5000,
-                 n_steps_per_frame: int = 1,
-                 initial_positions: Optional[Any] = None):
+                 config: Optional[Dict[str, Any]] = None,
+                 n_frames_max: Optional[int] = 5000,
+                 n_steps_per_frame: Optional[int] = 1,
+                 initial_positions: Optional[Any] = None,
+                 config_path: Optional[Path] = None):
         """Initialize TPS-ready OpenMM setup from GROMACS.
         
         Parameters
@@ -405,9 +411,54 @@ class OpenMMGromacsTPS:
         """
         
         self.state_definitions = state_definitions
+        self.initial_positions = initial_positions
+        self.config = {}  # Store full config for selector/scheme access
+
+        if config_path is not None:
+            config_path = Path(config_path)
+            print(f"Loading OpenMM GROMACS config from: {config_path}")
+            full_config = read_config(config_path)
+            self.config = full_config  # Store for later access
+
+            system_files = full_config.get('system_files', {})
+            resource_dir = Path(system_files.get('resource_directory', '.'))
+            if topology_file is None:
+                topology_file = resource_dir / system_files.get('topology_file')
+            if structure_file is None:
+                structure_file = resource_dir / system_files.get('structure_file')
+            if forcefield_dir is None:
+                forcefield_dir = resource_dir / system_files.get('forcefield_dir')
+
+            tps_settings = full_config.get('TPS_settings', {})
+            if n_frames_max is None:
+                n_frames_max = tps_settings.get('n_frames_max', 5000)
+            if n_steps_per_frame is None:
+                n_steps_per_frame = tps_settings.get('n_steps_per_frame', 1)
+
+            if config is None:
+                integrator_settings = full_config.get('Integrator_settings', {})
+                system_parameters = full_config.get('system_parameters', {})
+                config = {
+                    'temperature': integrator_settings.get('temperature', 300.0),
+                    'pressure': integrator_settings.get('pressure', 1.0),
+                    'timestep': integrator_settings.get('dt', 0.002),
+                    'friction': integrator_settings.get('friction', 1.0),
+                    'barostat_frequency': integrator_settings.get('barostat_frequency', 25),
+                    'platform': full_config.get('platform_name', 'CUDA'),
+                    'precision': system_parameters.get('precision', 'mixed'),
+                    'nonbondedCutoff': system_parameters.get('nonbondedCutoff', 1.1),
+                    'ewaldErrorTolerance': system_parameters.get('ewaldErrorTolerance', 1e-5),
+                    'constraints': system_parameters.get('constraints', 'HBonds'),
+                }
+
+        if topology_file is None or structure_file is None or forcefield_dir is None:
+            raise ValueError(
+                "Must provide either config_path or all of: "
+                "topology_file, structure_file, forcefield_dir"
+            )
+
         self.n_frames_max = n_frames_max
         self.n_steps_per_frame = n_steps_per_frame
-        self.initial_positions = initial_positions
         
         # Create core OpenMM setup
         self.openmm = OpenMMGromacs(
@@ -448,7 +499,7 @@ class OpenMMGromacsTPS:
             openmm_properties=self.openmm.platform_properties,
             options=engine_options
         )
-        self.engine.name = 'gromacs_engine'
+        self.engine.name = 'openmm_gromacs_engine'
         self.engine.initialize(self.openmm.platform)
     
     def _create_template(self) -> None:
@@ -538,176 +589,3 @@ class OpenMMGromacsTPS:
             final_states=self.states[1]
         ).named('TPS_network')
 
-
-class GromacsCVFactory:
-    """
-    Factory for creating collective variables from GROMACS simulations.
-    
-    This class provides convenience methods for defining common CVs
-    based on atomic coordinates and distances.
-    
-    Example
-    -------
-    >>> cv_factory = GromacsCVFactory(topology)
-    >>> cv = cv_factory.distance_cv('distance_6067', atom_indices=(59, 60))
-    """
-    
-    def __init__(self, topology: app.Topology):
-        """
-        Initialize CV factory.
-        
-        Parameters
-        ----------
-        topology : Topology
-            OpenMM topology object
-        """
-        self.topology = topology
-        self.n_atoms = topology.getNumAtoms()
-    
-    def distance_cv(self, name: str, atom_indices: Tuple[int, int]) -> paths.CollectiveVariable:
-        """
-        Create a distance collective variable.
-        
-        Parameters
-        ----------
-        name : str
-            Name for the CV
-        atom_indices : tuple
-            (atom_i, atom_j) indices
-            
-        Returns
-        -------
-        CollectiveVariable
-            Distance CV between atoms i and j
-        """
-        def compute_distance(frame, arg=None):
-            """Compute distance between two atoms."""
-            try:
-                xyz = frame.xyz
-            except AttributeError:
-                xyz = frame.coordinates
-            
-            if xyz is None:
-                return 0.0
-            
-            indices = arg if arg is not None else atom_indices
-            diff = xyz[indices[0]] - xyz[indices[1]]
-            return (diff @ diff) ** 0.5
-        
-        return paths.FunctionCV(
-            name, compute_distance, self.topology, arg=atom_indices
-        )
-    
-    def position_cv(self, name: str, atom_index: int, 
-                    axis: str = 'x') -> paths.CollectiveVariable:
-        """
-        Create a position (coordinate) collective variable.
-        
-        Parameters
-        ----------
-        name : str
-            Name for the CV
-        atom_index : int
-            Atom index
-        axis : str
-            Coordinate axis ('x', 'y', or 'z')
-            
-        Returns
-        -------
-        CollectiveVariable
-            Position CV for specified axis
-        """
-        axis_idx = {'x': 0, 'y': 1, 'z': 2}[axis.lower()]
-        
-        def compute_position(frame, arg=None):
-            """Compute position along axis."""
-            try:
-                xyz = frame.xyz
-            except AttributeError:
-                xyz = frame.coordinates
-            
-            if xyz is None:
-                return 0.0
-            
-            args = arg if arg is not None else (atom_index, axis_idx)
-            return xyz[args[0], args[1]]
-        
-        return paths.FunctionCV(
-            name, compute_position, self.topology, arg=(atom_index, axis_idx)
-        )
-    
-    def minimum_distance_cv(self, name: str, 
-                           group1: Tuple[int, ...],
-                           group2: Tuple[int, ...]) -> paths.CollectiveVariable:
-        """
-        Create a minimum distance CV between two atom groups.
-        
-        Parameters
-        ----------
-        name : str
-            Name for the CV
-        group1 : tuple
-            Indices of atoms in first group
-        group2 : tuple
-            Indices of atoms in second group
-            
-        Returns
-        -------
-        CollectiveVariable
-            Minimum distance CV
-        """
-        def compute_min_distance(frame, arg=None):
-            """Compute minimum distance between two atom groups."""
-            groups = arg if arg is not None else (group1, group2)
-            try:
-                mdtraj = __import__('mdtraj')
-                traj = mdtraj.Trajectory(frame.xyz.reshape(1, -1, 3), None)
-                distances = mdtraj.compute_distances(
-                    traj, [(i, j) for i in groups[0] for j in groups[1]]
-                )
-                return distances.min()
-            except (ImportError, AttributeError, ValueError):
-                # Fallback if mdtraj not available
-                try:
-                    xyz = frame.xyz
-                except AttributeError:
-                    xyz = frame.coordinates
-                
-                if xyz is None:
-                    return 0.0
-                
-                min_dist = float('inf')
-                for i in groups[0]:
-                    for j in groups[1]:
-                        diff = xyz[i] - xyz[j]
-                        dist = (diff @ diff) ** 0.5
-                        min_dist = min(min_dist, dist)
-                return min_dist
-        
-        return paths.FunctionCV(
-            name, compute_min_distance, self.topology, arg=(group1, group2)
-        )
-    
-    def custom_cv(self, name: str, 
-                 function: Callable,
-                 arg: Any = None) -> paths.CollectiveVariable:
-        """
-        Create a custom collective variable from user-defined function.
-        
-        Parameters
-        ----------
-        name : str
-            Name for the CV
-        function : callable
-            Function taking (frame, arg) and returning float
-        arg : any, optional
-            Argument passed to function
-            
-        Returns
-        -------
-        CollectiveVariable
-            Custom CV
-        """
-        return paths.FunctionCV(
-            name, function, self.topology, arg=arg
-        )
