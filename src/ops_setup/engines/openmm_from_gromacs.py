@@ -11,9 +11,10 @@ from typing import Optional, Tuple, Any, Dict, Callable, List
 import json
 from collections import namedtuple
 import warnings
+import numpy as np
 
-from ..core.config_reader import read_config
-from ..core.tps_utilities import TPSUtilitiesMixin
+from ..core.config_reader import read_config, print_config
+from .openmm_engine import OpenMMTPSSetup
 
 try:
     from openmm import app
@@ -181,10 +182,11 @@ class OpenMMGromacs:
         )
         
         # Add barostat for NPT
-        self.system.addForce(
-            mm.MonteCarloBarostat(self.pressure, self.temperature, self.barostat_frequency)
-        )
-        
+        if self.config.get('pressure') is not None and self.config.get('pressure') > 0:
+            self.system.addForce(
+                mm.MonteCarloBarostat(self.pressure, self.temperature, self.barostat_frequency)
+            )
+            
         print("System created successfully")
     
     def _setup_integrator(self) -> None:
@@ -211,7 +213,7 @@ class OpenMMGromacs:
             self.platform_properties = {'OpenCLPrecision': self.config['precision']}
     
     def _create_simulation(self) -> None:
-        """Create OpenMM simulation."""
+        """Create OpenMM simulation (used only for utilities, not for TPS)."""
         print("Creating OpenMM simulation...")
         
         self.simulation = app.Simulation(
@@ -347,21 +349,17 @@ class OpenMMGromacs:
         self.simulation.step(n_steps)
 
 
-class OpenMMGromacsTPS(TPSUtilitiesMixin):
+class OpenMMGromacsTPS(OpenMMTPSSetup):
     """
     TPS-ready OpenMM setup from GROMACS files.
     
-    This class wraps OpenMMGromacs to provide functionality for transition path
-    sampling, including OPS engine creation and state definition.
+    This class extends OpenMMTPSSetup to provide GROMACS file loading and
+    setup functionality for transition path sampling.
     
     Parameters
     ----------
-    topology_file : str or Path
-        Path to GROMACS topology file
-    structure_file : str or Path
-        Path to GROMACS coordinate file
-    forcefield_dir : str or Path
-        Directory containing forcefield files
+    config_path : str or Path
+        Path to JSON configuration file (required)
     state_definitions : dict
         Dictionary defining stable states. Format:
         {
@@ -371,20 +369,24 @@ class OpenMMGromacsTPS(TPSUtilitiesMixin):
             },
             'stateB': {...}
         }
-    config : dict, optional
-        Configuration dictionary (see OpenMMGromacs)
-    config_path : str or Path, optional
-        Path to JSON configuration file (loads system files and engine settings)
-    n_frames_max : int, optional
-        Maximum frames in trajectory. Default is 5000.
-    n_steps_per_frame : int, optional
-        MD steps between frames. Default is 1.
+    topology_file : str or Path, optional
+        Path to GROMACS topology file (overrides config)
+    structure_file : str or Path, optional
+        Path to GROMACS coordinate file (overrides config)
+    forcefield_dir : str or Path, optional
+        Directory containing forcefield files (overrides config)
+    initial_positions : array-like, optional
+        Initial positions to use for template
+    print_config_flag : bool, optional
+        Whether to print configuration. Default is True.
         
     Attributes
     ----------
-    openmm : OpenMMGromacs
-        Core OpenMM setup object
-    engine : Engine
+    gro : GromacsGroFile
+        Loaded GROMACS structure
+    gmx : GromacsTopFile
+        Loaded GROMACS topology
+    md_engine : Engine
         OpenPathSampling engine
     states : tuple
         (stateA, stateB) volume definitions
@@ -393,136 +395,135 @@ class OpenMMGromacsTPS(TPSUtilitiesMixin):
     """
     
     def __init__(self,
-                 topology_file: Optional[Path],
-                 structure_file: Optional[Path],
-                 forcefield_dir: Optional[Path],
+                 config_path: Path,
                  state_definitions: Dict[str, Any],
-                 config: Optional[Dict[str, Any]] = None,
-                 n_frames_max: Optional[int] = 5000,
-                 n_steps_per_frame: Optional[int] = 1,
+                 topology_file: Optional[Path] = None,
+                 structure_file: Optional[Path] = None,
+                 forcefield_dir: Optional[Path] = None,
                  initial_positions: Optional[Any] = None,
-                 config_path: Optional[Path] = None):
+                 print_config_flag: bool = True):
         """Initialize TPS-ready OpenMM setup from GROMACS.
         
         Parameters
         ----------
+        config_path : Path
+            Path to JSON configuration file
+        state_definitions : dict
+            Dictionary defining stable states
+        topology_file : Path, optional
+            Override topology file from config
+        structure_file : Path, optional
+            Override structure file from config
+        forcefield_dir : Path, optional
+            Override forcefield directory from config
         initial_positions : array-like, optional
             Initial positions to use for template. If None, uses positions from structure_file.
+        print_config_flag : bool, optional
+            Whether to print configuration
         """
         
+        # Store state definitions and initial positions before parent init
         self.state_definitions = state_definitions
         self.initial_positions = initial_positions
-        self.config = {}  # Store full config for selector/scheme access
-
-        if config_path is not None:
-            config_path = Path(config_path)
-            print(f"Loading OpenMM GROMACS config from: {config_path}")
-            full_config = read_config(config_path)
-            self.config = full_config  # Store for later access
-
-            system_files = full_config.get('system_files', {})
-            resource_dir = Path(system_files.get('resource_directory', '.'))
-            if topology_file is None:
-                topology_file = resource_dir / system_files.get('topology_file')
-            if structure_file is None:
-                structure_file = resource_dir / system_files.get('structure_file')
-            if forcefield_dir is None:
-                forcefield_dir = resource_dir / system_files.get('forcefield_dir')
-
-            tps_settings = full_config.get('TPS_settings', {})
-            if n_frames_max is None:
-                n_frames_max = tps_settings.get('n_frames_max', 5000)
-            if n_steps_per_frame is None:
-                n_steps_per_frame = tps_settings.get('n_steps_per_frame', 1)
-
-            if config is None:
-                integrator_settings = full_config.get('Integrator_settings', {})
-                system_parameters = full_config.get('system_parameters', {})
-                config = {
-                    'temperature': integrator_settings.get('temperature', 300.0),
-                    'pressure': integrator_settings.get('pressure', 1.0),
-                    'timestep': integrator_settings.get('dt', 0.002),
-                    'friction': integrator_settings.get('friction', 1.0),
-                    'barostat_frequency': integrator_settings.get('barostat_frequency', 25),
-                    'platform': full_config.get('platform_name', 'CUDA'),
-                    'precision': system_parameters.get('precision', 'mixed'),
-                    'nonbondedCutoff': system_parameters.get('nonbondedCutoff', 1.1),
-                    'ewaldErrorTolerance': system_parameters.get('ewaldErrorTolerance', 1e-5),
-                    'constraints': system_parameters.get('constraints', 'HBonds'),
-                }
-
+        
+        # Store file path overrides to use in _setup_system
+        self._topology_file_override = topology_file
+        self._structure_file_override = structure_file
+        self._forcefield_dir_override = forcefield_dir
+        
+        # Call parent constructor (handles config loading, integrator, engine, etc.)
+        super().__init__(config_path, print_config_flag)
+    
+    def _setup_system(self) -> Tuple[Any, Any, Any]:
+        """Set up system from GROMACS files.
+        
+        Returns
+        -------
+        tuple
+            (topology, system, positions)
+        """
+        print("Loading GROMACS files and creating OpenMM system...")
+        
+        # Get file paths from config or overrides
+        system_files = self.config.get('system_files', {})
+        resource_dir = Path(system_files.get('resource_directory', '.'))
+        
+        topology_file = self._topology_file_override or (resource_dir / system_files.get('topology_file'))
+        structure_file = self._structure_file_override or (resource_dir / system_files.get('structure_file'))
+        forcefield_dir = self._forcefield_dir_override or (resource_dir / system_files.get('forcefield_dir'))
+        
         if topology_file is None or structure_file is None or forcefield_dir is None:
             raise ValueError(
-                "Must provide either config_path or all of: "
-                "topology_file, structure_file, forcefield_dir"
+                "Must provide topology_file, structure_file, and forcefield_dir "
+                "either in config or as arguments"
             )
-
-        self.n_frames_max = n_frames_max
-        self.n_steps_per_frame = n_steps_per_frame
         
-        # Create core OpenMM setup
-        self.openmm = OpenMMGromacs(
-            topology_file, structure_file, forcefield_dir, config
+        print(f"  Topology: {topology_file}")
+        print(f"  Structure: {structure_file}")
+        print(f"  Force field dir: {forcefield_dir}")
+        
+        # Load GROMACS files
+        self.gro = app.GromacsGroFile(str(structure_file))
+        self.gmx = app.GromacsTopFile(
+            str(topology_file),
+            periodicBoxVectors=self.gro.getPeriodicBoxVectors(),
+            includeDir=str(forcefield_dir)
         )
         
-        # Create template and define states
-        self._create_template()
-        self.topology = self.template.topology
+        topology = self.gmx.topology
+        self.box_vectors = self.gro.getPeriodicBoxVectors()
         
-        # Create OPS engine
-        self._create_ops_engine()
+        print(f"  Loaded {topology.getNumAtoms()} atoms")
         
-        # Define states
-        self._define_states()
-    
-    def _create_ops_engine(self) -> None:
-        """Create OpenPathSampling engine from OpenMM simulation."""
-        print("Creating OPS engine from OpenMM simulation...")
+        # Create OpenMM system
+        system_params = self.config.get('system_parameters', {})
+        nonbondedCutoff = system_params.get('nonbondedCutoff', 1.1) * nanometers
+        constraint_type = getattr(app, system_params.get('constraints', 'HBonds'))
         
-        # Create a fresh integrator for OPS (can't reuse one already bound to a context)
-        ops_integrator = VVVRIntegrator(
-            self.openmm.temperature,
-            self.openmm.friction,
-            self.openmm.dt
+        system = self.gmx.createSystem(
+            nonbondedMethod=app.PME,
+            nonbondedCutoff=nonbondedCutoff,
+            constraints=constraint_type,
+            ewaldErrorTolerance=system_params.get('ewaldErrorTolerance', 1e-5)
         )
-        ops_integrator.setConstraintTolerance(1e-5)
         
-        engine_options = {
-            'n_frames_max': self.n_frames_max,
-            'n_steps_per_frame': self.n_steps_per_frame
-        }
-        
-        self.engine = eng.Engine(
-            topology=self.template.topology,
-            system=self.openmm.system,
-            integrator=ops_integrator,
-            openmm_properties=self.openmm.platform_properties,
-            options=engine_options
-        )
-        self.engine.name = 'openmm_gromacs_engine'
-        self.engine.initialize(self.openmm.platform)
-    
-    def _create_template(self) -> None:
-        """Create snapshot template from initial configuration."""
-        print("Creating snapshot template...")
-        
-        import numpy as np
+        # Add barostat for NPT
+        if self.constant_variable == "P":
+            system.addForce(
+                mm.MonteCarloBarostat(self.pressure, self.temperature, self.barostat_frequency)
+            )
         
         # Use provided initial positions or default from structure file
         if self.initial_positions is not None:
             positions = self.initial_positions
         else:
-            positions = self.openmm.positions
+            positions = self.gro.positions
+        
+        print("OpenMM system created successfully")
+        
+        return topology, system, positions
+    
+    def _create_template(self):
+        """Create snapshot template from initial configuration.
+        
+        Overrides parent to handle GROMACS-specific position formats.
+        
+        Returns
+        -------
+        Snapshot
+            OpenMM snapshot template
+        """
+        print("Creating snapshot template...")
         
         # Convert positions to numpy array if needed (OPS requires .shape attribute)
+        positions = self.positions
         if hasattr(positions, '_value'):
             # OpenMM Quantity object
             pos_array = np.array(positions._value) * positions.unit
         elif not hasattr(positions, 'shape'):
             # List or other iterable - convert to numpy array with units
-            import openmm.unit as unit
             pos_values = np.array([[p.x, p.y, p.z] for p in positions])
-            pos_array = pos_values * unit.nanometer
+            pos_array = pos_values * self.size_unit
         else:
             pos_array = positions
         
@@ -532,16 +533,22 @@ class OpenMMGromacsTPS(TPSUtilitiesMixin):
         )
         
         test_sys = testsystem(
-            name='gromacs_system',
-            system=self.openmm.system,
-            topology=self.openmm.topology,
+            name=self.system_name,
+            system=self.system,
+            topology=self._topology,
             positions=pos_array
         )
         
-        self.template = eng.snapshot_from_testsystem(test_sys)
+        return eng.snapshot_from_testsystem(test_sys)
     
-    def _define_states(self) -> None:
-        """Define stable states from state_definitions."""
+    def _define_states(self) -> Tuple[Any, Any]:
+        """Define stable states from state_definitions.
+        
+        Returns
+        -------
+        tuple
+            (stateA, stateB) volume definitions
+        """
         print("Defining stable states...")
         
         state_volumes = []
@@ -572,8 +579,8 @@ class OpenMMGromacsTPS(TPSUtilitiesMixin):
             volume = volume.named(state_name)
             state_volumes.append(volume)
         
-        self.states = tuple(state_volumes)
-        print(f"States defined: {[s.name for s in self.states]}")
+        print(f"States defined: {[s.name for s in state_volumes]}")
+        return tuple(state_volumes)
     
     def create_tps_network(self) -> paths.TPSNetwork:
         """
