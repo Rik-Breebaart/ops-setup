@@ -581,18 +581,4 @@ class OpenMMGromacsTPS(OpenMMTPSSetup):
         
         print(f"States defined: {[s.name for s in state_volumes]}")
         return tuple(state_volumes)
-    
-    def create_tps_network(self) -> paths.TPSNetwork:
-        """
-        Create TPS network from defined states.
-        
-        Returns
-        -------
-        TPSNetwork
-            Transition path sampling network
-        """
-        return paths.TPSNetwork(
-            initial_states=self.states[0],
-            final_states=self.states[1]
-        ).named('TPS_network')
 
