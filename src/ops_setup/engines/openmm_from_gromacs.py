@@ -11,6 +11,10 @@ from typing import Optional, Tuple, Any, Dict, Callable, List
 import json
 from collections import namedtuple
 import warnings
+import numpy as np
+
+from ..core.config_reader import read_config, print_config
+from .openmm_engine import OpenMMTPSSetup
 
 try:
     from openmm import app
@@ -178,10 +182,11 @@ class OpenMMGromacs:
         )
         
         # Add barostat for NPT
-        self.system.addForce(
-            mm.MonteCarloBarostat(self.pressure, self.temperature, self.barostat_frequency)
-        )
-        
+        if self.config.get('pressure') is not None and self.config.get('pressure') > 0:
+            self.system.addForce(
+                mm.MonteCarloBarostat(self.pressure, self.temperature, self.barostat_frequency)
+            )
+            
         print("System created successfully")
     
     def _setup_integrator(self) -> None:
@@ -208,7 +213,7 @@ class OpenMMGromacs:
             self.platform_properties = {'OpenCLPrecision': self.config['precision']}
     
     def _create_simulation(self) -> None:
-        """Create OpenMM simulation."""
+        """Create OpenMM simulation (used only for utilities, not for TPS)."""
         print("Creating OpenMM simulation...")
         
         self.simulation = app.Simulation(
@@ -344,21 +349,17 @@ class OpenMMGromacs:
         self.simulation.step(n_steps)
 
 
-class OpenMMGromacsTPS:
+class OpenMMGromacsTPS(OpenMMTPSSetup):
     """
     TPS-ready OpenMM setup from GROMACS files.
     
-    This class wraps OpenMMGromacs to provide functionality for transition path
-    sampling, including OPS engine creation and state definition.
+    This class extends OpenMMTPSSetup to provide GROMACS file loading and
+    setup functionality for transition path sampling.
     
     Parameters
     ----------
-    topology_file : str or Path
-        Path to GROMACS topology file
-    structure_file : str or Path
-        Path to GROMACS coordinate file
-    forcefield_dir : str or Path
-        Directory containing forcefield files
+    config_path : str or Path
+        Path to JSON configuration file (required)
     state_definitions : dict
         Dictionary defining stable states. Format:
         {
@@ -368,18 +369,24 @@ class OpenMMGromacsTPS:
             },
             'stateB': {...}
         }
-    config : dict, optional
-        Configuration dictionary (see OpenMMGromacs)
-    n_frames_max : int, optional
-        Maximum frames in trajectory. Default is 5000.
-    n_steps_per_frame : int, optional
-        MD steps between frames. Default is 1.
+    topology_file : str or Path, optional
+        Path to GROMACS topology file (overrides config)
+    structure_file : str or Path, optional
+        Path to GROMACS coordinate file (overrides config)
+    forcefield_dir : str or Path, optional
+        Directory containing forcefield files (overrides config)
+    initial_positions : array-like, optional
+        Initial positions to use for template
+    print_config_flag : bool, optional
+        Whether to print configuration. Default is True.
         
     Attributes
     ----------
-    openmm : OpenMMGromacs
-        Core OpenMM setup object
-    engine : Engine
+    gro : GromacsGroFile
+        Loaded GROMACS structure
+    gmx : GromacsTopFile
+        Loaded GROMACS topology
+    md_engine : Engine
         OpenPathSampling engine
     states : tuple
         (stateA, stateB) volume definitions
@@ -388,90 +395,135 @@ class OpenMMGromacsTPS:
     """
     
     def __init__(self,
-                 topology_file: Path,
-                 structure_file: Path,
-                 forcefield_dir: Path,
+                 config_path: Path,
                  state_definitions: Dict[str, Any],
-                 config: Dict[str, Any] = None,
-                 n_frames_max: int = 5000,
-                 n_steps_per_frame: int = 1,
-                 initial_positions: Optional[Any] = None):
+                 topology_file: Optional[Path] = None,
+                 structure_file: Optional[Path] = None,
+                 forcefield_dir: Optional[Path] = None,
+                 initial_positions: Optional[Any] = None,
+                 print_config_flag: bool = True):
         """Initialize TPS-ready OpenMM setup from GROMACS.
         
         Parameters
         ----------
+        config_path : Path
+            Path to JSON configuration file
+        state_definitions : dict
+            Dictionary defining stable states
+        topology_file : Path, optional
+            Override topology file from config
+        structure_file : Path, optional
+            Override structure file from config
+        forcefield_dir : Path, optional
+            Override forcefield directory from config
         initial_positions : array-like, optional
             Initial positions to use for template. If None, uses positions from structure_file.
+        print_config_flag : bool, optional
+            Whether to print configuration
         """
         
+        # Store state definitions and initial positions before parent init
         self.state_definitions = state_definitions
-        self.n_frames_max = n_frames_max
-        self.n_steps_per_frame = n_steps_per_frame
         self.initial_positions = initial_positions
         
-        # Create core OpenMM setup
-        self.openmm = OpenMMGromacs(
-            topology_file, structure_file, forcefield_dir, config
-        )
+        # Store file path overrides to use in _setup_system
+        self._topology_file_override = topology_file
+        self._structure_file_override = structure_file
+        self._forcefield_dir_override = forcefield_dir
         
-        # Create template and define states
-        self._create_template()
-        self.topology = self.template.topology
-        
-        # Create OPS engine
-        self._create_ops_engine()
-        
-        # Define states
-        self._define_states()
+        # Call parent constructor (handles config loading, integrator, engine, etc.)
+        super().__init__(config_path, print_config_flag)
     
-    def _create_ops_engine(self) -> None:
-        """Create OpenPathSampling engine from OpenMM simulation."""
-        print("Creating OPS engine from OpenMM simulation...")
+    def _setup_system(self) -> Tuple[Any, Any, Any]:
+        """Set up system from GROMACS files.
         
-        # Create a fresh integrator for OPS (can't reuse one already bound to a context)
-        ops_integrator = VVVRIntegrator(
-            self.openmm.temperature,
-            self.openmm.friction,
-            self.openmm.dt
+        Returns
+        -------
+        tuple
+            (topology, system, positions)
+        """
+        print("Loading GROMACS files and creating OpenMM system...")
+        
+        # Get file paths from config or overrides
+        system_files = self.config.get('system_files', {})
+        resource_dir = Path(system_files.get('resource_directory', '.'))
+        
+        topology_file = self._topology_file_override or (resource_dir / system_files.get('topology_file'))
+        structure_file = self._structure_file_override or (resource_dir / system_files.get('structure_file'))
+        forcefield_dir = self._forcefield_dir_override or (resource_dir / system_files.get('forcefield_dir'))
+        
+        if topology_file is None or structure_file is None or forcefield_dir is None:
+            raise ValueError(
+                "Must provide topology_file, structure_file, and forcefield_dir "
+                "either in config or as arguments"
+            )
+        
+        print(f"  Topology: {topology_file}")
+        print(f"  Structure: {structure_file}")
+        print(f"  Force field dir: {forcefield_dir}")
+        
+        # Load GROMACS files
+        self.gro = app.GromacsGroFile(str(structure_file))
+        self.gmx = app.GromacsTopFile(
+            str(topology_file),
+            periodicBoxVectors=self.gro.getPeriodicBoxVectors(),
+            includeDir=str(forcefield_dir)
         )
-        ops_integrator.setConstraintTolerance(1e-5)
         
-        engine_options = {
-            'n_frames_max': self.n_frames_max,
-            'n_steps_per_frame': self.n_steps_per_frame
-        }
+        topology = self.gmx.topology
+        self.box_vectors = self.gro.getPeriodicBoxVectors()
         
-        self.engine = eng.Engine(
-            topology=self.template.topology,
-            system=self.openmm.system,
-            integrator=ops_integrator,
-            openmm_properties=self.openmm.platform_properties,
-            options=engine_options
+        print(f"  Loaded {topology.getNumAtoms()} atoms")
+        
+        # Create OpenMM system
+        system_params = self.config.get('system_parameters', {})
+        nonbondedCutoff = system_params.get('nonbondedCutoff', 1.1) * nanometers
+        constraint_type = getattr(app, system_params.get('constraints', 'HBonds'))
+        
+        system = self.gmx.createSystem(
+            nonbondedMethod=app.PME,
+            nonbondedCutoff=nonbondedCutoff,
+            constraints=constraint_type,
+            ewaldErrorTolerance=system_params.get('ewaldErrorTolerance', 1e-5)
         )
-        self.engine.name = 'gromacs_engine'
-        self.engine.initialize(self.openmm.platform)
-    
-    def _create_template(self) -> None:
-        """Create snapshot template from initial configuration."""
-        print("Creating snapshot template...")
         
-        import numpy as np
+        # Add barostat for NPT
+        if self.constant_variable == "P":
+            system.addForce(
+                mm.MonteCarloBarostat(self.pressure, self.temperature, self.barostat_frequency)
+            )
         
         # Use provided initial positions or default from structure file
         if self.initial_positions is not None:
             positions = self.initial_positions
         else:
-            positions = self.openmm.positions
+            positions = self.gro.positions
+        
+        print("OpenMM system created successfully")
+        
+        return topology, system, positions
+    
+    def _create_template(self):
+        """Create snapshot template from initial configuration.
+        
+        Overrides parent to handle GROMACS-specific position formats.
+        
+        Returns
+        -------
+        Snapshot
+            OpenMM snapshot template
+        """
+        print("Creating snapshot template...")
         
         # Convert positions to numpy array if needed (OPS requires .shape attribute)
+        positions = self.positions
         if hasattr(positions, '_value'):
             # OpenMM Quantity object
             pos_array = np.array(positions._value) * positions.unit
         elif not hasattr(positions, 'shape'):
             # List or other iterable - convert to numpy array with units
-            import openmm.unit as unit
             pos_values = np.array([[p.x, p.y, p.z] for p in positions])
-            pos_array = pos_values * unit.nanometer
+            pos_array = pos_values * self.size_unit
         else:
             pos_array = positions
         
@@ -481,16 +533,22 @@ class OpenMMGromacsTPS:
         )
         
         test_sys = testsystem(
-            name='gromacs_system',
-            system=self.openmm.system,
-            topology=self.openmm.topology,
+            name=self.system_name,
+            system=self.system,
+            topology=self._topology,
             positions=pos_array
         )
         
-        self.template = eng.snapshot_from_testsystem(test_sys)
+        return eng.snapshot_from_testsystem(test_sys)
     
-    def _define_states(self) -> None:
-        """Define stable states from state_definitions."""
+    def _define_states(self) -> Tuple[Any, Any]:
+        """Define stable states from state_definitions.
+        
+        Returns
+        -------
+        tuple
+            (stateA, stateB) volume definitions
+        """
         print("Defining stable states...")
         
         state_volumes = []
@@ -521,193 +579,6 @@ class OpenMMGromacsTPS:
             volume = volume.named(state_name)
             state_volumes.append(volume)
         
-        self.states = tuple(state_volumes)
-        print(f"States defined: {[s.name for s in self.states]}")
-    
-    def create_tps_network(self) -> paths.TPSNetwork:
-        """
-        Create TPS network from defined states.
-        
-        Returns
-        -------
-        TPSNetwork
-            Transition path sampling network
-        """
-        return paths.TPSNetwork(
-            initial_states=self.states[0],
-            final_states=self.states[1]
-        ).named('TPS_network')
+        print(f"States defined: {[s.name for s in state_volumes]}")
+        return tuple(state_volumes)
 
-
-class GromacsCVFactory:
-    """
-    Factory for creating collective variables from GROMACS simulations.
-    
-    This class provides convenience methods for defining common CVs
-    based on atomic coordinates and distances.
-    
-    Example
-    -------
-    >>> cv_factory = GromacsCVFactory(topology)
-    >>> cv = cv_factory.distance_cv('distance_6067', atom_indices=(59, 60))
-    """
-    
-    def __init__(self, topology: app.Topology):
-        """
-        Initialize CV factory.
-        
-        Parameters
-        ----------
-        topology : Topology
-            OpenMM topology object
-        """
-        self.topology = topology
-        self.n_atoms = topology.getNumAtoms()
-    
-    def distance_cv(self, name: str, atom_indices: Tuple[int, int]) -> paths.CollectiveVariable:
-        """
-        Create a distance collective variable.
-        
-        Parameters
-        ----------
-        name : str
-            Name for the CV
-        atom_indices : tuple
-            (atom_i, atom_j) indices
-            
-        Returns
-        -------
-        CollectiveVariable
-            Distance CV between atoms i and j
-        """
-        def compute_distance(frame, arg=None):
-            """Compute distance between two atoms."""
-            try:
-                xyz = frame.xyz
-            except AttributeError:
-                xyz = frame.coordinates
-            
-            if xyz is None:
-                return 0.0
-            
-            indices = arg if arg is not None else atom_indices
-            diff = xyz[indices[0]] - xyz[indices[1]]
-            return (diff @ diff) ** 0.5
-        
-        return paths.FunctionCV(
-            name, compute_distance, self.topology, arg=atom_indices
-        )
-    
-    def position_cv(self, name: str, atom_index: int, 
-                    axis: str = 'x') -> paths.CollectiveVariable:
-        """
-        Create a position (coordinate) collective variable.
-        
-        Parameters
-        ----------
-        name : str
-            Name for the CV
-        atom_index : int
-            Atom index
-        axis : str
-            Coordinate axis ('x', 'y', or 'z')
-            
-        Returns
-        -------
-        CollectiveVariable
-            Position CV for specified axis
-        """
-        axis_idx = {'x': 0, 'y': 1, 'z': 2}[axis.lower()]
-        
-        def compute_position(frame, arg=None):
-            """Compute position along axis."""
-            try:
-                xyz = frame.xyz
-            except AttributeError:
-                xyz = frame.coordinates
-            
-            if xyz is None:
-                return 0.0
-            
-            args = arg if arg is not None else (atom_index, axis_idx)
-            return xyz[args[0], args[1]]
-        
-        return paths.FunctionCV(
-            name, compute_position, self.topology, arg=(atom_index, axis_idx)
-        )
-    
-    def minimum_distance_cv(self, name: str, 
-                           group1: Tuple[int, ...],
-                           group2: Tuple[int, ...]) -> paths.CollectiveVariable:
-        """
-        Create a minimum distance CV between two atom groups.
-        
-        Parameters
-        ----------
-        name : str
-            Name for the CV
-        group1 : tuple
-            Indices of atoms in first group
-        group2 : tuple
-            Indices of atoms in second group
-            
-        Returns
-        -------
-        CollectiveVariable
-            Minimum distance CV
-        """
-        def compute_min_distance(frame, arg=None):
-            """Compute minimum distance between two atom groups."""
-            groups = arg if arg is not None else (group1, group2)
-            try:
-                mdtraj = __import__('mdtraj')
-                traj = mdtraj.Trajectory(frame.xyz.reshape(1, -1, 3), None)
-                distances = mdtraj.compute_distances(
-                    traj, [(i, j) for i in groups[0] for j in groups[1]]
-                )
-                return distances.min()
-            except (ImportError, AttributeError, ValueError):
-                # Fallback if mdtraj not available
-                try:
-                    xyz = frame.xyz
-                except AttributeError:
-                    xyz = frame.coordinates
-                
-                if xyz is None:
-                    return 0.0
-                
-                min_dist = float('inf')
-                for i in groups[0]:
-                    for j in groups[1]:
-                        diff = xyz[i] - xyz[j]
-                        dist = (diff @ diff) ** 0.5
-                        min_dist = min(min_dist, dist)
-                return min_dist
-        
-        return paths.FunctionCV(
-            name, compute_min_distance, self.topology, arg=(group1, group2)
-        )
-    
-    def custom_cv(self, name: str, 
-                 function: Callable,
-                 arg: Any = None) -> paths.CollectiveVariable:
-        """
-        Create a custom collective variable from user-defined function.
-        
-        Parameters
-        ----------
-        name : str
-            Name for the CV
-        function : callable
-            Function taking (frame, arg) and returning float
-        arg : any, optional
-            Argument passed to function
-            
-        Returns
-        -------
-        CollectiveVariable
-            Custom CV
-        """
-        return paths.FunctionCV(
-            name, function, self.topology, arg=arg
-        )

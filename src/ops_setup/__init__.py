@@ -10,6 +10,8 @@ __version__ = "0.1.0"
 from .core.config_reader import read_config, print_config, validate_config_keys
 from .core.tps_setup import TPSSetupBase
 from .core.tis_setup import TISSetupBase
+from .tis_analysis import find_cv_extrema_csvs
+from .utils.analysis import center_ops_trajectory
 
 __all__ = [
     'read_config',
@@ -17,4 +19,6 @@ __all__ = [
     'validate_config_keys',
     'TPSSetupBase',
     'TISSetupBase',
+    'find_cv_extrema_csvs',
+    'center_ops_trajectory',
 ]

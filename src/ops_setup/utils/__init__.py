@@ -8,6 +8,7 @@ from .argument_parser import (
     TPS_ARGUMENTS,
     TIS_ARGUMENTS
 )
+from .analysis import center_ops_trajectory
 
 __all__ = [
     'create_parser',
@@ -16,4 +17,5 @@ __all__ = [
     'COMMON_ARGUMENTS',
     'TPS_ARGUMENTS',
     'TIS_ARGUMENTS',
+    'center_ops_trajectory',
 ]
