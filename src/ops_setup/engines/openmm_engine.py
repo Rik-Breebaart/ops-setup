@@ -121,25 +121,62 @@ class OpenMMTPSSetup(TPSSetupBase):
         Engine
             OpenPathSampling OpenMM engine.
         """
-        print(f"Setting up OpenMM engine on {self.platform_name} platform...")
-        platform = mm.Platform.getPlatformByName(self.platform_name)
-        
         engine_options = {
             'n_frames_max': self.n_frames_max,
             'n_steps_per_frame': self.n_steps_per_frame
         }
-        
-        engine = eng.Engine(
-            topology=self.topology,
-            system=self.system,
-            integrator=integrator,
-            openmm_properties=self._get_platform_properties(),
-            options=engine_options
+
+        requested_platform = str(self.platform_name)
+        requested_is_gpu = requested_platform.upper() in {'CUDA', 'OPENCL'}
+
+        candidates = [requested_platform]
+        if requested_is_gpu and requested_platform.upper() != 'CPU':
+            candidates.append('CPU')
+
+        attempts = []
+
+        for candidate in candidates:
+            try:
+                print(f"Setting up OpenMM engine on {candidate} platform...")
+                platform = mm.Platform.getPlatformByName(candidate)
+
+                engine = eng.Engine(
+                    topology=self.topology,
+                    system=self.system,
+                    integrator=integrator,
+                    openmm_properties=self._get_platform_properties(candidate),
+                    options=engine_options
+                )
+                engine.name = 'default'
+                engine.initialize(platform)
+
+                if candidate != requested_platform:
+                    print(
+                        "WARNING: Requested OpenMM platform "
+                        f"'{requested_platform}' is unavailable and execution was "
+                        "switched to 'CPU'. This will most likely be much slower."
+                    )
+
+                return engine
+
+            except Exception as exc:
+                attempts.append((candidate, str(exc)))
+                if candidate != 'CPU':
+                    print(
+                        f"WARNING: Failed to initialize OpenMM platform '{candidate}': {exc}"
+                    )
+                    print(
+                        "WARNING: Falling back to 'CPU'. This will most likely be much slower."
+                    )
+                    continue
+                break
+
+        attempted = ', '.join(name for name, _ in attempts)
+        details = '; '.join(f"{name}: {msg}" for name, msg in attempts)
+        raise RuntimeError(
+            f"Could not initialize OpenMM engine. Attempted platforms: {attempted}. "
+            f"Details: {details}"
         )
-        engine.name = 'default'
-        engine.initialize(platform)
-        
-        return engine
     
     def _setup_system(self) -> Tuple[Any, Any, Any]:
         """
@@ -207,23 +244,30 @@ class OpenMMTPSSetup(TPSSetupBase):
             "system-specific stable states."
         )
     
-    def _get_platform_properties(self) -> Dict[str, str]:
+    def _get_platform_properties(self, platform_name: Optional[str] = None) -> Dict[str, str]:
         """
         Get OpenMM platform-specific properties.
+
+        Parameters
+        ----------
+        platform_name : str, optional
+            Platform to get properties for. If None, use self.platform_name.
         
         Returns
         -------
         dict
             Platform properties for OpenMM.
         """
-        if self.platform_name == 'OpenCL':
+        platform_name = (platform_name or self.platform_name)
+
+        if platform_name == 'OpenCL':
             return {
                 'OpenCLPrecision': 'mixed',
                 'OpenCLDeviceIndex': '0'
             }
-        elif self.platform_name == 'CUDA':
+        elif platform_name == 'CUDA':
             return {'CudaPrecision': 'mixed'}
-        elif self.platform_name == 'CPU':
+        elif platform_name == 'CPU':
             return {}
         else:
             return {}
