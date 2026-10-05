@@ -45,6 +45,11 @@ from .sampling_utils import (
     get_last_storage_index,
 )
 
+from .stable_state import (
+    build_stable_state_storage,
+    load_stable_state_payload,
+)
+
 __all__ = [
     'DescriptorStorage',
     'TrajectoryInfo',
@@ -54,6 +59,8 @@ __all__ = [
     'infer_descriptor_names_and_shapes',
     'extract_descriptors_from_cv',
     'get_last_storage_index',
+    'build_stable_state_storage',
+    'load_stable_state_payload',
 ]
 
 __version__ = '0.1.0'

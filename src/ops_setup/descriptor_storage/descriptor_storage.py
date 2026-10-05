@@ -55,7 +55,7 @@ class TrajectoryInfo:
 @dataclass
 class InterfaceData:
     """Data for all trajectories at a specific interface."""
-    interface_value: float
+    interface_value: Union[float, str]
     trajectories: List[TrajectoryInfo] = field(default_factory=list)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -173,16 +173,19 @@ class DescriptorStorage:
         self.sets: Dict[str, SetData] = {}
         self.descriptors: Dict[str, np.ndarray] = {}
         self.shot_results: Optional[np.ndarray] = None
+        self.point_data: Dict[str, np.ndarray] = {}
         self.trajectory_weights: Dict[str, Dict[str, np.ndarray]] = {}
         self.metadata: Dict[str, Any] = {
             'method_type': method_type,
             'created': time.time(),
-            'descriptor_dims': {}
+            'descriptor_dims': {},
+            'point_data_dims': {},
         }
         
         # Internal state for efficient writing
         self._descriptor_accumulators: Dict[str, List[np.ndarray]] = {}
         self._shot_results_accumulator: List[np.ndarray] = []
+        self._point_data_accumulators: Dict[str, List[np.ndarray]] = {}
         self._global_point_index = 0
         
         if mode == 'r' and self.path.parent.exists():
@@ -224,7 +227,7 @@ class DescriptorStorage:
     
     def flush(self):
         """Flush accumulated data to disk."""
-        if not self._descriptor_accumulators and not self._shot_results_accumulator:
+        if not self._descriptor_accumulators and not self._shot_results_accumulator and not self._point_data_accumulators:
             return
         
         # Finalize descriptor arrays
@@ -242,6 +245,14 @@ class DescriptorStorage:
                 self.shot_results = new_results
             else:
                 self.shot_results = np.vstack([self.shot_results, new_results])
+
+        # Finalize point data
+        for name, arr_list in self._point_data_accumulators.items():
+            if name not in self.point_data or self.point_data[name] is None:
+                self.point_data[name] = np.concatenate(arr_list, axis=0)
+            else:
+                new_part = np.concatenate(arr_list, axis=0)
+                self.point_data[name] = np.vstack([self.point_data[name], new_part])
         
         # Save to disk
         self.save()
@@ -249,7 +260,9 @@ class DescriptorStorage:
         # Clear accumulators
         self._descriptor_accumulators.clear()
         self._shot_results_accumulator.clear()
-        self._global_point_index = 0
+        self._point_data_accumulators.clear()
+        # Keep global offsets cumulative across flushes within one run.
+        self._global_point_index = self._compute_total_points()
     
     # ========================================================================
     # Data Addition
@@ -262,7 +275,8 @@ class DescriptorStorage:
                       n_points: int,
                       storage_index: int,
                       relative_index: Optional[int] = None,
-                      shot_results: Optional[np.ndarray] = None) -> None:
+                      shot_results: Optional[np.ndarray] = None,
+                      point_data: Optional[Dict[str, np.ndarray]] = None) -> None:
         """
         Add descriptors for a single trajectory.
         
@@ -293,7 +307,7 @@ class DescriptorStorage:
             self.sets[set_name] = SetData(set_name=set_name)
         if interface_key not in self.sets[set_name].interfaces:
             self.sets[set_name].interfaces[interface_key] = InterfaceData(
-                interface_value=float(interface_value)
+                interface_value=_coerce_interface_value(interface_value)
             )
         
         interface_data = self.sets[set_name].interfaces[interface_key]
@@ -321,6 +335,21 @@ class DescriptorStorage:
                     f"but trajectory has {n_points} points"
                 )
             self._shot_results_accumulator.append(shot_results)
+
+        if point_data is not None:
+            for name, arr in point_data.items():
+                arr = np.asarray(arr)
+                if arr.ndim == 1:
+                    arr = arr.reshape(-1, 1)
+                if arr.shape[0] != n_points:
+                    raise ValueError(
+                        f"Point data {name} has {arr.shape[0]} points, "
+                        f"but trajectory has {n_points} points"
+                    )
+                if name not in self._point_data_accumulators:
+                    self._point_data_accumulators[name] = []
+                    self.metadata['point_data_dims'][name] = arr.shape[1] if arr.ndim > 1 else 1
+                self._point_data_accumulators[name].append(arr)
         
         # Record trajectory metadata
         traj_info = TrajectoryInfo(
@@ -350,7 +379,7 @@ class DescriptorStorage:
             raise KeyError(f"Interface '{interface_key}' not found in set '{set_name}'")
         not_in_descriptors = [name for name in descriptor_names if name not in self.descriptors]
         if not_in_descriptors:
-            raise KeyError(f"Descriptors not found: {not_in_descriptors}")
+            raise KeyError(f"Descriptors not found: {not_in_descriptors}, the descriptors in the storage are: {list(self.descriptors.keys())}")
         
         traj_info = self.sets[set_name].interfaces[interface_key].trajectories[trajectory_index]
         return np.concatenate([
@@ -372,6 +401,21 @@ class DescriptorStorage:
         return self.shot_results[
             traj_info.descriptor_start:traj_info.descriptor_end
         ]
+
+    def get_trajectory_point_data(self,
+                                  set_name: str,
+                                  interface_value: Union[float, str],
+                                  trajectory_index: int,
+                                  field_name: str) -> np.ndarray:
+        """Get per-point auxiliary data for a specific trajectory."""
+        if field_name not in self.point_data:
+            raise KeyError(f"Point data field '{field_name}' not found")
+
+        interface_key = _interface_key(interface_value)
+        traj_info = self.sets[set_name].interfaces[interface_key].trajectories[trajectory_index]
+        return self.point_data[field_name][
+            traj_info.descriptor_start:traj_info.descriptor_end
+        ]
     
     def get_interface_descriptors(self,
                                  set_name: str,
@@ -381,7 +425,7 @@ class DescriptorStorage:
         """Get all descriptors at a specific interface (concatenated)."""
         not_in_descriptors = [name for name in descriptor_names if name not in self.descriptors]
         if not_in_descriptors:
-            raise KeyError(f"Descriptors not found: {not_in_descriptors}")
+            raise KeyError(f"Descriptors not found: {not_in_descriptors}, the descriptors in the storage are: {list(self.descriptors.keys())}")
         
         interface_key = _interface_key(interface_value)
         interface_data = self.sets[set_name].interfaces[interface_key]
@@ -396,6 +440,41 @@ class DescriptorStorage:
         return np.concatenate([
             self.descriptors[name][start:end] for name in descriptor_names
         ], axis=1)
+
+    def get_interface_shot_results(self,
+                                   set_name: str,
+                                   interface_value: Union[float, str],
+                                   starting_traj: int = 0) -> Optional[np.ndarray]:
+        """Get all shot results at a specific interface (concatenated)."""
+        if self.shot_results is None:
+            return None
+
+        interface_key = _interface_key(interface_value)
+        interface_data = self.sets[set_name].interfaces[interface_key]
+        if not interface_data.trajectories:
+            return np.array([])
+
+        start = interface_data.trajectories[starting_traj].descriptor_start
+        end = interface_data.trajectories[-1].descriptor_end
+        return self.shot_results[start:end]
+
+    def get_interface_point_data(self,
+                                 set_name: str,
+                                 interface_value: Union[float, str],
+                                 field_name: str,
+                                 starting_traj: int = 0) -> np.ndarray:
+        """Get all per-point auxiliary data at a specific interface (concatenated)."""
+        if field_name not in self.point_data:
+            raise KeyError(f"Point data field '{field_name}' not found")
+
+        interface_key = _interface_key(interface_value)
+        interface_data = self.sets[set_name].interfaces[interface_key]
+        if not interface_data.trajectories:
+            return np.array([])
+
+        start = interface_data.trajectories[starting_traj].descriptor_start
+        end = interface_data.trajectories[-1].descriptor_end
+        return self.point_data[field_name][start:end]
     
     # ========================================================================
     # Weights Management
@@ -482,6 +561,13 @@ class DescriptorStorage:
                     self.shot_results = arrays[key]
                 else:
                     self.descriptors[key] = arrays[key]
+
+        # Load point data
+        point_data_file = self.path.parent / f"{self.path.name}.point_data.npz"
+        if point_data_file.exists():
+            point_arrays = np.load(point_data_file)
+            for key in point_arrays.files:
+                self.point_data[key] = point_arrays[key]
         
         # Load weights
         weights_file = self.path.parent / f"{self.path.name}.weights.npz"
@@ -570,6 +656,13 @@ class DescriptorStorage:
                     storage.shot_results = arrays[key]
                 else:
                     storage.descriptors[key] = arrays[key]
+
+        # Load point data
+        point_data_file = path.parent / f"{path.name}.point_data.npz"
+        if point_data_file.exists():
+            point_arrays = np.load(point_data_file)
+            for key in point_arrays.files:
+                storage.point_data[key] = point_arrays[key]
         
         # Load weights
         weights_file = path.parent / f"{path.name}.weights.npz"
@@ -611,6 +704,11 @@ class DescriptorStorage:
         
         save_fn = np.savez_compressed if self.compress else np.savez
         save_fn(descriptors_file, **arrays_to_save)
+
+        # Save point data if present
+        if self.point_data:
+            point_data_file = self.path.parent / f"{self.path.name}.point_data.npz"
+            save_fn(point_data_file, **self.point_data)
         
         # Save weights if present
         if self.trajectory_weights:
@@ -641,6 +739,7 @@ class DescriptorStorage:
             "=" * 70,
             f"Method Type: {self.method_type}",
             f"Descriptor Types: {', '.join(self.descriptors.keys())}",
+            f"Point Data Types: {', '.join(self.point_data.keys())}",
             ""
         ]
         
@@ -680,3 +779,13 @@ def _interface_key(interface_value: Union[float, str]) -> str:
     if isinstance(interface_value, float):
         return f"{interface_value:.2f}"
     return str(interface_value)
+
+
+def _coerce_interface_value(interface_value: Union[float, str]) -> Union[float, str]:
+    """Preserve stable-state labels while normalizing numeric interfaces."""
+    if isinstance(interface_value, str):
+        try:
+            return float(interface_value)
+        except ValueError:
+            return interface_value
+    return interface_value
