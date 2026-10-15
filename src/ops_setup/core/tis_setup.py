@@ -10,6 +10,16 @@ import openpathsampling as paths
 from .tps_setup import TPSSetupBase
 from .config_reader import read_config, print_config
 
+IN_STATE_LOW = -1e10   # forward: frames in A sit below every interface
+IN_STATE_HIGH = 1e10   # backward: frames in B sit above every interface
+
+
+def _cv_with_state(snapshot, cv, state, in_state_value):
+    """Order parameter that equals ``in_state_value`` inside ``state``
+    and ``cv(snapshot)`` everywhere else."""
+    if state(snapshot):
+        return in_state_value
+    return cv(snapshot)
 
 class TISSetupBase(TPSSetupBase):
     """
@@ -119,11 +129,22 @@ class TISSetupBase(TPSSetupBase):
         
         return network
 
-    def create_interface_set(self, cv, interface_value: float, 
-                            direction: str = "forward"):
+    def create_interface_set(self, cv, interface_value: float,
+                                direction: str = "forward"):
         """
         Create an interface set for TIS.
-        
+
+        The interface volume is the union of the initial state and the
+        region on the state side of ``interface_value``:
+
+            forward:  stateA ∪ {cv ≤ interface_value}
+            backward: stateB ∪ {cv ≥ interface_value}
+
+        This is built from a modified order parameter that takes a
+        sentinel value inside the state, so a path counts as crossing
+        the interface only once it has left the state *and* passed
+        ``interface_value``.
+
         Parameters
         ----------
         cv : CollectiveVariable
@@ -132,43 +153,44 @@ class TISSetupBase(TPSSetupBase):
             Value of the CV at the interface.
         direction : str, optional
             Direction of crossing ('forward' or 'backward'). Default is 'forward'.
-            
+
         Returns
         -------
         VolumeInterfaceSet
             Interface set for TIS simulation.
         """
         stateA, stateB = self.states
+
         if direction == "forward":
-           # Define the interface volume where cv <= interface_value
-            interfaceVolume = paths.VolumeInterfaceSet(cv, minvals=-float("inf"), maxvals=interface_value)
-
-            # union volume to ensure exclusion of stable state
-            unionVolumeStateA = paths.UnionVolume(interfaceVolume[0], stateA)
-
-            # Refine the interface to exclude state A
-            interfaceOutStateVolume = paths.VolumeInterfaceSet(
-                cv, 
-                minvals=-float("inf"), 
-                maxvals=interface_value, 
-                intersect_with=unionVolumeStateA
+            lambda_cv = paths.FunctionCV(
+                f"{cv.name}_with_stateA",
+                _cv_with_state,
+                cv=cv,
+                state=stateA,
+                in_state_value=IN_STATE_LOW,
             )
-            return interfaceOutStateVolume
-            
-        else:  # backward
-            # Define the interface volume where cv_q >= interface_value
-            interfaceVolume = paths.VolumeInterfaceSet(cv, minvals=interface_value, maxvals=float("inf"))
+            return paths.VolumeInterfaceSet(
+                lambda_cv,
+                minvals=-float("inf"),
+                maxvals=interface_value,
+            )
 
-            # Combine the interface volume with state B
-            unionVolumeStateB = paths.UnionVolume(interfaceVolume[0], stateB)
-
-            # Refine the interface to exclude state B
-            interfaceOutStateVolume = paths.VolumeInterfaceSet(
-                cv, 
+        elif direction == "backward":
+            lambda_cv = paths.FunctionCV(
+                f"{cv.name}_with_stateB",
+                _cv_with_state,
+                cv=cv,
+                state=stateB,
+                in_state_value=IN_STATE_HIGH,
+            )
+            return paths.VolumeInterfaceSet(
+                lambda_cv,
                 minvals=interface_value,
-                maxvals=float("inf"), 
-                intersect_with=unionVolumeStateB) 
-            return interfaceOutStateVolume
+                maxvals=float("inf"),
+            )
+
+        else:
+            raise ValueError(f"direction must be 'forward' or 'backward', got {direction!r}")
 
     def get_interface_values(self, direction: str = "forward") -> List[float]:
         """
@@ -190,3 +212,6 @@ class TISSetupBase(TPSSetupBase):
             return self.interface_values_backward
         else:
             raise ValueError(f"Direction must be 'forward' or 'backward', got '{direction}'")
+
+
+
