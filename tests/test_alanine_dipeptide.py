@@ -84,3 +84,22 @@ def test_dynamics_at_300K(ad, path):
     traj = eng.generate(path[0], [paths.LengthEnsemble(50).can_append])
     X = np.array([np.asarray(s.coordinates) for s in traj])
     assert len(traj) == 50 and np.all(np.isfinite(X))
+
+
+def test_platform_properties_and_seeded_runs(ad):
+    ctx = ad.md_engine.simulation.context
+    assert ctx.getPlatform().getPropertyValue(ctx, "Threads") == "1"          # from the config
+    a = ad.generate_initial_path(seed=3, trim=False)
+    b = ad.generate_initial_path(seed=3, trim=False)
+    assert len(a) == len(b)
+    assert np.array_equal(np.asarray(a[-1].coordinates), np.asarray(b[-1].coordinates))
+
+
+def test_random_seed_from_the_config(tmp_path):
+    import json
+    cfg = json.loads(DEFAULT_CONFIG.read_text())
+    cfg["Integrator_settings"]["random_seed"] = 1234
+    p = tmp_path / "c.json"; p.write_text(json.dumps(cfg))
+    with contextlib.redirect_stdout(io.StringIO()):
+        ad2 = AlanineDipeptideVacuumSetup(p, print_config_flag=False)
+    assert ad2.md_engine.simulation.context.getIntegrator().getRandomNumberSeed() == 1234

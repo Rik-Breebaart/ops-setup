@@ -2,7 +2,9 @@
 
 States are boxes in the backbone dihedrals (phi, psi), read from the ``States`` block
 of the config; the default config (``config_alanine_dipeptide_vacuum.json``, shipped
-with the package) defines C7eq and C7ax at 300 K::
+with the package) defines C7eq and C7ax at 300 K, on one CPU thread (``platform_properties``: with
+more threads OpenMM's CPU platform is not bit-reproducible, even with
+``DeterministicForces``)::
 
     from ops_setup.systems.examples.alanine_dipeptide import AlanineDipeptideVacuumSetup
     ad = AlanineDipeptideVacuumSetup()                 # packaged default config

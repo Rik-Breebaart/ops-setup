@@ -1,6 +1,9 @@
 {
   "system_name": "alanine_dipeptide_vacuum",
   "platform_name": "CPU",
+  "platform_properties": {
+    "Threads": "1"
+  },
   "UNITS": {
     "size_unit": "nanometer",
     "press_unit": "bar",
@@ -23,8 +26,26 @@
     "constraints": "HBonds"
   },
   "States": {
-    "C7eq": {"phi": [-180.0, -50.0], "psi": [30.0, 210.0]},
-    "C7ax": {"phi": [40.0, 90.0], "psi": [-100.0, -40.0]}
+    "C7eq": {
+      "phi": [
+        -180.0,
+        -50.0
+      ],
+      "psi": [
+        30.0,
+        210.0
+      ]
+    },
+    "C7ax": {
+      "phi": [
+        40.0,
+        90.0
+      ],
+      "psi": [
+        -100.0,
+        -40.0
+      ]
+    }
   },
   "initial_path": {
     "temperature": 800.0,

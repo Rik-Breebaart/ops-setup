@@ -93,6 +93,12 @@ class OpenMMTPSSetup(TPSSetupBase):
         self.friction = integrator_config.get("friction", 1.0) / self.time_unit
         self.barostat_frequency = integrator_config.get("barostat_frequency", 25)
         self.constant_variable = integrator_config.get("constant_variable", "V")
+        # optional: the integrator's random seed (0 / absent: OpenMM picks one per context)
+        self.random_seed = integrator_config.get("random_seed")
+        # optional OpenMM platform properties, merged over the per-platform defaults,
+        # e.g. {"Threads": "1"} (bit-identical CPU runs) or {"Precision": "double"}
+        self.platform_properties = {str(k): str(v) for k, v in
+                                    self.config.get("platform_properties", {}).items()}
         # inverse temperature per particle, as paths.RandomVelocities expects it for
         # OpenMM engines, and the thermal energy per mole
         self.beta = 1.0 / (self.temperature * unit.BOLTZMANN_CONSTANT_kB)
@@ -114,6 +120,8 @@ class OpenMMTPSSetup(TPSSetupBase):
             self.dt
         )
         integrator.setConstraintTolerance(0.00001)
+        if self.random_seed is not None:
+            integrator.setRandomNumberSeed(int(self.random_seed))
         return integrator
     
     def _setup_engine(self, integrator):
@@ -270,16 +278,16 @@ class OpenMMTPSSetup(TPSSetupBase):
         platform_name = (platform_name or self.platform_name)
 
         if platform_name == 'OpenCL':
-            return {
+            props = {
                 'OpenCLPrecision': 'mixed',
                 'OpenCLDeviceIndex': '0'
             }
         elif platform_name == 'CUDA':
-            return {'CudaPrecision': 'mixed'}
-        elif platform_name == 'CPU':
-            return {}
+            props = {'CudaPrecision': 'mixed'}
         else:
-            return {}
+            props = {}
+        props.update(getattr(self, 'platform_properties', None) or {})
+        return props
 
 
 class AmberOpenMMSetup(OpenMMTPSSetup):
