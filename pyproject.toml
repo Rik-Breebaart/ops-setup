@@ -46,3 +46,6 @@ all = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+ops_setup = ["systems/examples/alanine_dipeptide/*.json"]

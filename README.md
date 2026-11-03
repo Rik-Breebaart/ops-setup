@@ -45,6 +45,7 @@ ops-setup/
 │   │   └── openmm_engine.py   # OpenMM-based engines
 │   ├── systems/               # System-specific implementations
 │   │   └── examples/
+│   │       ├── alanine_dipeptide/  # Alanine dipeptide in vacuum (C7eq/C7ax)
 │   │       ├── host_guest/    # Host-guest binding example
 │   │       └── toy_systems/   # Toy model examples
 │   └── utils/                 # Utility functions
@@ -55,6 +56,23 @@ ops-setup/
 ```
 
 ## Quick Start
+
+### 0. Alanine dipeptide in vacuum (no files needed)
+
+```python
+from ops_setup.systems.examples.alanine_dipeptide import AlanineDipeptideVacuumSetup, transform_functions as tf
+
+ad = AlanineDipeptideVacuumSetup()               # packaged config: 300 K, 2 fs, C7eq / C7ax
+path = ad.generate_initial_path(seed=1)          # hot MD, first C7eq -> C7ax transition
+network = ad.create_network("TPS")
+scheme = ad.create_move_scheme(network, scheme_type="TwoWay")
+descriptors = tf.descriptor_sincos(path)         # (n, 8): sin/cos of phi, psi, omega1, omega2
+```
+
+The system comes from openmmtools (`AlanineDipeptideVacuum`, amber ff96, HBonds). The states are φ/ψ boxes from the
+`States` block of `config_alanine_dipeptide_vacuum.json`. `ad.beta` and `ad.kT` hold the inverse temperature and the
+thermal energy. Notebook: `examples/notebooks/alanine_dipeptide/01_basic_tps_alanine_dipeptide.ipynb`; tests:
+`tests/test_alanine_dipeptide.py`.
 
 ### 1. Basic TPS Setup
 

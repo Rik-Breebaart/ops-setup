@@ -53,9 +53,14 @@ class OpenMMTPSSetup(TPSSetupBase):
         Frequency of barostat updates (if NPT).
     constant_variable : str
         Thermodynamic ensemble ('P' for NPT, 'V' for NVT).
+    beta : Quantity
+        Inverse temperature per particle, 1/(k_B T), as ``paths.RandomVelocities``
+        expects it for OpenMM engines.
+    kT : Quantity
+        Thermal energy per mole (kJ/mol).
     """
-    
-    def __init__(self, config_path: Path, 
+
+    def __init__(self, config_path: Path,
                  print_config_flag: bool = True):
         """Initialize OpenMM TPS setup."""
         # Will be set in _extract_config before super().__init__() calls them
@@ -88,6 +93,10 @@ class OpenMMTPSSetup(TPSSetupBase):
         self.friction = integrator_config.get("friction", 1.0) / self.time_unit
         self.barostat_frequency = integrator_config.get("barostat_frequency", 25)
         self.constant_variable = integrator_config.get("constant_variable", "V")
+        # inverse temperature per particle, as paths.RandomVelocities expects it for
+        # OpenMM engines, and the thermal energy per mole
+        self.beta = 1.0 / (self.temperature * unit.BOLTZMANN_CONSTANT_kB)
+        self.kT = (unit.MOLAR_GAS_CONSTANT_R * self.temperature).in_units_of(unit.kilojoule_per_mole)
     
     def _setup_integrator(self):
         """
