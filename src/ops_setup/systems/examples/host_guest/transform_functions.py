@@ -7,7 +7,10 @@ import openpathsampling as paths
 import openpathsampling.engines.openmm as eng
 from collections import namedtuple
 import mdtraj as md 
-mdtraj_host_guest = md.load("/home/rbreeba/code/ops-setup/examples/resource_files/host_guest/HostGuest.pdb")
+from pathlib import Path
+# the host-guest resource files, in the repository next to the package (an editable install)
+RESOURCE_DIR = Path(__file__).resolve().parents[5] / "examples" / "resource_files" / "host_guest"
+mdtraj_host_guest = md.load(str(RESOURCE_DIR / "HostGuest.pdb"))
 mdtraj_topology = mdtraj_host_guest.topology
 
 guest_head_indices = np.array(mdtraj_topology.select("name C9 H15"))

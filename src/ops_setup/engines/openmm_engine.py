@@ -95,6 +95,8 @@ class OpenMMTPSSetup(TPSSetupBase):
         self.constant_variable = integrator_config.get("constant_variable", "V")
         # optional: the integrator's random seed (0 / absent: OpenMM picks one per context)
         self.random_seed = integrator_config.get("random_seed")
+        # optional: the Monte Carlo barostat's random seed (NPT; absent: OpenMM picks one per context)
+        self.barostat_random_seed = integrator_config.get("barostat_random_seed")
         # optional OpenMM platform properties, merged over the per-platform defaults,
         # e.g. {"Threads": "1"} (bit-identical CPU runs) or {"Precision": "double"}
         self.platform_properties = {str(k): str(v) for k, v in
@@ -320,6 +322,9 @@ class AmberOpenMMSetup(OpenMMTPSSetup):
 
         system_files = self.config.get('system_files', {})
         resource_directory = Path(system_files.get('resource_directory', ''))
+        config_path = getattr(self, 'config_path', None)
+        if not resource_directory.is_absolute() and config_path is not None:
+            resource_directory = config_path.parent / resource_directory   # relative to the config file
         topology_file = system_files.get('topology_file', 'system.prmtop')
         coordinate_file = system_files.get('coordinate_file', 'system.inpcrd')
         state_file = system_files.get('state_file', None)
@@ -344,13 +349,14 @@ class AmberOpenMMSetup(OpenMMTPSSetup):
         
         # Add barostat if NPT
         if self.constant_variable == "P":
-            system.addForce(
-                mm.MonteCarloBarostat(
-                    self.pressure,
-                    self.temperature,
-                    self.barostat_frequency
-                )
+            barostat = mm.MonteCarloBarostat(
+                self.pressure,
+                self.temperature,
+                self.barostat_frequency
             )
+            if getattr(self, 'barostat_random_seed', None) is not None:
+                barostat.setRandomNumberSeed(int(self.barostat_random_seed))
+            system.addForce(barostat)
         
         # Initialize simulation to get positions
         init_simulation = app.Simulation(
