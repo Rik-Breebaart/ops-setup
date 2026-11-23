@@ -19,6 +19,17 @@ import inspect
 import sys
 import openpathsampling.engines.toy as toys
 
+
+def _init_args(obj):
+    """The constructor arguments, read back from the attributes of the same name and JSON-safe: what OPS
+    storage saves, and what ``from_dict`` (``cls(**dct)``) rebuilds the potential from."""
+    out = {}
+    for p in inspect.signature(type(obj).__init__).parameters:
+        if p != "self":
+            v = getattr(obj, p)
+            out[p] = v.tolist() if isinstance(v, np.ndarray) else v
+    return out
+
 # Define a class for a higher-dimensional harmonic potential
 class higher_d_harmonic(toys.PES):
     def __init__(self, n_dims_pot=2, n_harmonics=20, seed=123):
@@ -51,8 +62,8 @@ class higher_d_harmonic(toys.PES):
         np.random.set_state(rng_state)
 
     def to_dict(self):
-        # the constructor arguments only: the PES is rebuilt (seeded) from them, so storage stays JSON-safe and small
-        return {p: getattr(self, p) for p in inspect.signature(type(self).__init__).parameters if p != "self"}
+        # the constructor arguments only: the PES is rebuilt (seeded) from them
+        return _init_args(self)
 
     @classmethod
     def from_dict(cls, dct):
@@ -805,6 +816,7 @@ class Theoretical_linear_q(toys.PES):
 # Define a Z_pot toy potential class which describes the 2d Z potential.
 class Z_Pot(toys.PES):
     def __init__(self):
+        super().__init__()
         self._local_dVdx = None
         self._dWalldx = None
         self._dgausdx = None
@@ -814,8 +826,7 @@ class Z_Pot(toys.PES):
         return f"Z potential."
         
     def to_dict(self):
-        dct = super().to_dict()
-        return dct
+        return _init_args(self)
     
     def wall(self, x, y, sigma, x0):
         return sigma[0]*(x - x0[0])**4 + sigma[1]*(y - x0[1])**4
@@ -887,6 +898,8 @@ class Z_Pot(toys.PES):
 
 class WolfeQuapp(toys.PES):
     def __init__(self, rotation=45/180*np.pi, d=1, scale=2):
+        super().__init__()
+        self.rotation, self.d = rotation, d
 
         self.scale= scale
         self.cos_rot = np.cos(-rotation)/d
@@ -898,8 +911,7 @@ class WolfeQuapp(toys.PES):
         return f"WolfeQuapp"
     
     def to_dict(self):
-        dct = super().to_dict()
-        return dct
+        return _init_args(self)
     
     
     def V(self, sys):
@@ -944,6 +956,8 @@ class WolfeQuapp(toys.PES):
 #Define a Face Potential which has stable states at the same x coordinate but are oposite of a barrier allong y
 class FacePotential(toys.PES):
     def __init__(self, rotation=0, d=1, scale=1):
+        super().__init__()
+        self.rotation, self.d = rotation, d
         self.scale = scale
         self.cos_rot = np.cos(-rotation)/d
         self.sin_rot = np.sin(-rotation)/d
@@ -954,8 +968,7 @@ class FacePotential(toys.PES):
         return f"FacePotential"
     
     def to_dict(self):
-        dct = super().to_dict()
-        return dct
+        return _init_args(self)
     
     def V(self, sys):
         x = sys.positions[0]
@@ -1018,15 +1031,7 @@ class MuellerBrown(toys.PES):
         self._local_dVdx = None
 
     def to_dict(self):
-        dct = super(MuellerBrown, self).to_dict()
-        dct['alpha'] = dct['alpha'].tolist()
-        dct['beta'] = dct['beta'].tolist()
-        dct['gamma'] = dct['gamma'].tolist()
-        dct['a'] = dct['a'].tolist()
-        dct['b'] = dct['b'].tolist()
-        # dct['max_u'] = dct['max_u'].tolist()
-        # dct['scale'] = dct['scale'].tolist()
-        return dct
+        return _init_args(self)
 
     def __repr__(self):
         return "MuellerBrown({o.A}, {o.alpha}, {o.beta}, {o.gamma}, {o.a}, {o.b}, {o.max_u}, {o.scale})".format(o=self)
@@ -1064,6 +1069,7 @@ class MuellerBrown(toys.PES):
 
 class XYDiagpot(toys.PES):
     def __init__(self, b):
+        super().__init__()
         self.b = b
         self._local_dVdx = None
     
@@ -1071,9 +1077,7 @@ class XYDiagpot(toys.PES):
         return f"XYDiagpot with barrier height {self.b}."
         
     def to_dict(self):
-        dct = super().to_dict()
-        dct["b"] = self.b
-        return dct
+        return _init_args(self)
     
     def V(self, sys):
         """

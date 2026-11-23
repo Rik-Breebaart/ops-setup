@@ -9,8 +9,7 @@ from ops_setup.systems.examples.toy_systems import toy_potentials as tp
 
 POTENTIALS = [
     (tp.potential_0, dict(A=1.0, x0=1.0)), (tp.potential_1, {}), (tp.potential_2, dict(a=2, b=1)),
-    pytest.param(tp.potential_3, dict(a=2, b=1), marks=pytest.mark.xfail(
-        strict=True, reason="potential_3 draws its oscillator omegas from the caller's unseeded RNG")),
+    (tp.potential_3, dict(a=2, b=1)),
     (tp.potential_4_linear, {}), (tp.potential_5_Z_pot, {}), (tp.potential_linear_q, {}),
     (tp.potential_WQ, dict(rotation_degrees=0, scale=1.5)), (tp.potential_Face, dict(scale=1.3)),
     (tp.potential_MullerBrown, dict(d=1.1)),
@@ -19,6 +18,8 @@ POTENTIALS = [
 
 @pytest.mark.parametrize("cls,kw", POTENTIALS, ids=lambda v: getattr(v, "__name__", ""))
 def test_round_trip_keeps_the_potential_and_the_callers_rng(cls, kw):
+    if cls is tp.potential_3:
+        pytest.xfail("potential_3 draws its oscillator omegas from the caller's unseeded RNG")
     np.random.seed(7)
     before = np.random.get_state()[1].copy()
     pes = cls(n_harmonics=3, seed=11, **kw)
@@ -33,3 +34,24 @@ def test_round_trip_keeps_the_potential_and_the_callers_rng(cls, kw):
         snap = SimpleNamespace(positions=x, mass=pes.topology.masses)    # what the toy PES terms read
         assert again.V(snap) == pes.V(snap)
         assert np.array_equal(again.dVdx(snap), pes.dVdx(snap))
+
+
+@pytest.mark.parametrize("cls,kw", POTENTIALS, ids=lambda v: getattr(v, "__name__", ""))
+def test_the_topology_saves_and_loads_in_ops_storage(cls, kw, tmp_path):
+    """What an OPS archive of a toy run stores: the topology with its composite PES."""
+    from openpathsampling.experimental.storage import Storage
+    from openpathsampling.experimental.simstore.uuids import get_uuid
+    pes = cls(n_harmonics=3, seed=11, **kw)
+    path = str(tmp_path / "toy.db")
+    Storage._known_storages = {}
+    st = Storage(path, "w")
+    st.save([pes.topology])
+    uuid = get_uuid(pes.topology)
+    st.close()
+    Storage._known_storages = {}
+    st = Storage(path, "r")
+    top = st.load([uuid])[0]
+    x = np.random.default_rng(1).uniform(-1, 1, pes.n_dims_pot + 3)
+    snap = SimpleNamespace(positions=x, mass=pes.topology.masses)
+    assert top.pes.V(snap) == pes.topology.pes.V(snap)
+    st.close()
