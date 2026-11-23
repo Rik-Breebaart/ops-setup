@@ -15,8 +15,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import openpathsampling as paths
 from functools import reduce
+import inspect
 import sys
 import openpathsampling.engines.toy as toys
+
+
+def _init_args(obj):
+    """The constructor arguments, read back from the attributes of the same name and JSON-safe: what OPS
+    storage saves, and what ``from_dict`` (``cls(**dct)``) rebuilds the potential from."""
+    out = {}
+    for p in inspect.signature(type(obj).__init__).parameters:
+        if p != "self":
+            v = getattr(obj, p)
+            out[p] = v.tolist() if isinstance(v, np.ndarray) else v
+    return out
 
 # Define a class for a higher-dimensional harmonic potential
 class higher_d_harmonic(toys.PES):
@@ -28,7 +40,8 @@ class higher_d_harmonic(toys.PES):
 
     # Create a potential energy surface (PES) by adding harmonic oscillators
     def create_pes(self, pes_list):
-        # fix seed to get the same pes everytime
+        # fix seed to get the same pes everytime; the caller's global RNG state is restored below
+        rng_state = np.random.get_state()
         np.random.seed(self.seed)
         print("seed used for harmonic oscilattors", np.random.get_state()[1][0])
         harmonic_omegas = [1.0, 1.5] + [10*np.random.uniform(0.2,1.0) for _ in range(self.n_harmonics-2)]
@@ -46,8 +59,15 @@ class higher_d_harmonic(toys.PES):
         print(repr(pes_list[-1].omega))
         self.extent = [-1, 1, -1, 1]
         self.pes = reduce(lambda x,y: x+y, pes_list)
-        #reseed to remove influence of seed on other aspects of the code
-        np.random.seed(None)
+        np.random.set_state(rng_state)
+
+    def to_dict(self):
+        # the constructor arguments only: the PES is rebuilt (seeded) from them
+        return _init_args(self)
+
+    @classmethod
+    def from_dict(cls, dct):
+        return cls(**dct)
 
     # Create a topology for the system
     def create_topology(self):
@@ -134,6 +154,7 @@ class higher_d_harmonic(toys.PES):
 
 class potential_0(higher_d_harmonic):
     def __init__(self, A, x0, n_harmonics=20, seed=123):
+        self.A, self.x0 = A, x0
          # Initialize potential parameters and create the PES
         self.n_harmonics = n_harmonics
         self.seed = seed
@@ -235,6 +256,7 @@ class potential_1(higher_d_harmonic):
 # Define a subclass potential_2 that inherits from higher_d_harmonic
 class potential_2(higher_d_harmonic):
     def __init__(self, n_harmonics=20, a=1, b=0,seed=123):
+        self.a, self.b = a, b
          # Initialize potential parameters and create the PES
         self.n_harmonics = n_harmonics
         self.n_dims_pot = 2
@@ -301,6 +323,7 @@ class potential_2(higher_d_harmonic):
 # Define a subclass potential_3 that inherits from higher_d_harmonic
 class potential_3(higher_d_harmonic):
     def __init__(self, n_harmonics=20,a=1,b=0,seed=123):
+        self.a, self.b = a, b
          # Initialize potential parameters and create the PES
         self.n_harmonics = n_harmonics
         self.n_dims_pot = 2
@@ -506,6 +529,7 @@ class potential_linear_q(higher_d_harmonic):
     
 class potential_WQ(higher_d_harmonic):
     def __init__(self, n_harmonics=20, seed=123,rotation_degrees=45, d=1, scale=2):
+        self.rotation_degrees, self.d, self.scale = rotation_degrees, d, scale
         rotation = rotation_degrees/180*np.pi
         self.n_harmonics = n_harmonics
         self.seed = seed
@@ -549,6 +573,7 @@ class potential_WQ(higher_d_harmonic):
 
 class potential_Face(higher_d_harmonic):
     def __init__(self, n_harmonics=20, seed=123, rotation_degrees=0, d=1, scale=1):
+        self.rotation_degrees, self.d, self.scale = rotation_degrees, d, scale
         rotation = rotation_degrees / 180 * np.pi
         self.n_harmonics = n_harmonics
         self.seed = seed
@@ -605,6 +630,7 @@ class potential_Face(higher_d_harmonic):
 
 class potential_MullerBrown(higher_d_harmonic):
     def __init__(self, n_harmonics=20, seed=123, rotation_degrees=0, d=1, scale=1):
+        self.rotation_degrees, self.d, self.scale = rotation_degrees, d, scale
         rotation = rotation_degrees / 180 * np.pi
         self.n_harmonics = n_harmonics
         self.seed = seed
@@ -790,6 +816,7 @@ class Theoretical_linear_q(toys.PES):
 # Define a Z_pot toy potential class which describes the 2d Z potential.
 class Z_Pot(toys.PES):
     def __init__(self):
+        super().__init__()
         self._local_dVdx = None
         self._dWalldx = None
         self._dgausdx = None
@@ -799,8 +826,7 @@ class Z_Pot(toys.PES):
         return f"Z potential."
         
     def to_dict(self):
-        dct = super().to_dict()
-        return dct
+        return _init_args(self)
     
     def wall(self, x, y, sigma, x0):
         return sigma[0]*(x - x0[0])**4 + sigma[1]*(y - x0[1])**4
@@ -872,6 +898,8 @@ class Z_Pot(toys.PES):
 
 class WolfeQuapp(toys.PES):
     def __init__(self, rotation=45/180*np.pi, d=1, scale=2):
+        super().__init__()
+        self.rotation, self.d = rotation, d
 
         self.scale= scale
         self.cos_rot = np.cos(-rotation)/d
@@ -883,8 +911,7 @@ class WolfeQuapp(toys.PES):
         return f"WolfeQuapp"
     
     def to_dict(self):
-        dct = super().to_dict()
-        return dct
+        return _init_args(self)
     
     
     def V(self, sys):
@@ -929,6 +956,8 @@ class WolfeQuapp(toys.PES):
 #Define a Face Potential which has stable states at the same x coordinate but are oposite of a barrier allong y
 class FacePotential(toys.PES):
     def __init__(self, rotation=0, d=1, scale=1):
+        super().__init__()
+        self.rotation, self.d = rotation, d
         self.scale = scale
         self.cos_rot = np.cos(-rotation)/d
         self.sin_rot = np.sin(-rotation)/d
@@ -939,8 +968,7 @@ class FacePotential(toys.PES):
         return f"FacePotential"
     
     def to_dict(self):
-        dct = super().to_dict()
-        return dct
+        return _init_args(self)
     
     def V(self, sys):
         x = sys.positions[0]
@@ -1003,15 +1031,7 @@ class MuellerBrown(toys.PES):
         self._local_dVdx = None
 
     def to_dict(self):
-        dct = super(MuellerBrown, self).to_dict()
-        dct['alpha'] = dct['alpha'].tolist()
-        dct['beta'] = dct['beta'].tolist()
-        dct['gamma'] = dct['gamma'].tolist()
-        dct['a'] = dct['a'].tolist()
-        dct['b'] = dct['b'].tolist()
-        # dct['max_u'] = dct['max_u'].tolist()
-        # dct['scale'] = dct['scale'].tolist()
-        return dct
+        return _init_args(self)
 
     def __repr__(self):
         return "MuellerBrown({o.A}, {o.alpha}, {o.beta}, {o.gamma}, {o.a}, {o.b}, {o.max_u}, {o.scale})".format(o=self)
@@ -1049,6 +1069,7 @@ class MuellerBrown(toys.PES):
 
 class XYDiagpot(toys.PES):
     def __init__(self, b):
+        super().__init__()
         self.b = b
         self._local_dVdx = None
     
@@ -1056,9 +1077,7 @@ class XYDiagpot(toys.PES):
         return f"XYDiagpot with barrier height {self.b}."
         
     def to_dict(self):
-        dct = super().to_dict()
-        dct["b"] = self.b
-        return dct
+        return _init_args(self)
     
     def V(self, sys):
         """
