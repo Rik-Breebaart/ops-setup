@@ -55,6 +55,8 @@ class TPSSetupBase(TPSUtilitiesMixin):
     def __init__(self, config_path: Path, print_config_flag: bool = True):
         """Initialize the TPS setup from configuration file."""
         self.config = read_config(config_path)
+        # the config file: relative paths in it (e.g. a resource_directory) resolve against its directory
+        self.config_path = Path(config_path).resolve() if not isinstance(config_path, dict) else None
 
         
         if print_config_flag:

@@ -1,0 +1,40 @@
+{
+  "system_name": "CB7-B2",
+  "platform_name": "CPU",
+  "UNITS": {
+    "size_unit": "nanometer",
+    "press_unit": "bar",
+    "temp_unit": "kelvin",
+    "time_unit": "picosecond"
+  },
+  "Integrator_settings": {
+    "temperature": 298.15,
+    "pressure": 1.0,
+    "dt": 0.002,
+    "friction": 1.0,
+    "barostat_frequency": 25,
+    "constant_variable": "P"
+  },
+  "TPS_settings": {
+    "n_frames_max": 5000,
+    "n_steps_per_frame": 10,
+    "shooting_scheme": "TwoWay",
+    "selector": "uniform"
+  },
+  "system_files": {
+    "topology_file": "complex-explicit.prmtop",
+    "coordinate_file": "complex-explicit.inpcrd",
+    "state_file": "cb7_b2_mdV_cont2.state"
+  },
+  "system_parameters": {
+    "nonbonded_cutoff": 1.0,
+    "ewald_tolerance": 0.0005
+  },
+  "States": {
+    "bound": 0.05,
+    "unbound": 1.0
+  },
+  "initial_path": {
+    "storage": "initialPathNPT.db"
+  }
+}
